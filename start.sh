@@ -12,7 +12,7 @@ Q=${Q:-q}
 command -v "$Q" >/dev/null || { [ -x "$HOME/.kx/bin/q" ] && Q="$HOME/.kx/bin/q"; }
 command -v "$Q" >/dev/null || { echo "Can't find 'q'. Install KDB-X, or run Q=/path/to/q ./start.sh"; exit 1; }
 command -v uv >/dev/null || { echo "Can't find 'uv' (https://docs.astral.sh/uv/), needed for the DuckDB lane."; exit 1; }
-[ -f lib/kxfft.so ] || ./c/build.sh
+[ -f lib/kxfft.so ] && [ -f lib/kxblas.so ] || ./c/build.sh
 uv sync -q
 CORES=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 AUTO=$((CORES-6)); ((AUTO<1)) && AUTO=1; ((AUTO>8)) && AUTO=8

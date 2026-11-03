@@ -60,12 +60,13 @@ apart, and drones shifted against each other by a sample would break a swarm's c
 |---|---|---|---|---|
 | **Signatures** | alt, ias, imuz, downsampled to 50 Hz | `.ai.tss.tss` (z-normalized) or `.ai.dtw.search`, per channel, built into KDB-X, `peach` over drones | NumPy z-normalized distance profile, or dtaidistance DTW with KDB-X's definition (in a worker process, OpenMP threads) | per drone, best signature and its distance (mean over the signature's channels) when below its threshold |
 | **Anomaly** | imuz at 50 Hz | `.ai.tss.tssdist`: distance of the newest 0.5 s to its nearest match earlier in the window | NumPy, the same distance | drones whose score is above the threshold |
-| **Swarm** | altitude and airspeed first differences at 50 Hz | z-normalize, `mmu`: all pairwise correlations | z-normalize, NumPy matrix product | groups of three or more drones whose correlation on both channels is above 0.99 (connected components) |
-| **Rotor** | rpm at full rate, newest 512 samples | **KissFFT via the KX C API** (`lib/kxfft.so`, `fftpeak`) | `numpy.fft` | dominant 5 to 40 Hz frequency per drone, its class, and laden (8% low) |
+| **Swarm** | altitude and airspeed first differences at 50 Hz | z-normalize, all pairwise correlations as one matrix product: the platform BLAS via the KX C API (`lib/kxblas.so`, `gram`; Apple Accelerate on macOS), or `mmu` with `peach` without one | z-normalize, NumPy matrix product (Accelerate on macOS) | groups of three or more drones whose correlation on both channels is above 0.99 (connected components) |
+| **Rotor** | rpm at full rate, newest 512 samples | **KissFFT via the KX C API** (`lib/kxfft.so`, `fftpeak`), one call per thread's share of the drones | `numpy.fft` | dominant 5 to 40 Hz frequency per drone, its class, and laden (8% low) |
 
 Thresholds live in `config.json`, shared by both lanes. Each lane's analytics use the same number
-of threads (`THREADS`, default 8): the kdb+ engine's secondary threads (`-s`), and the DuckDB
-lane's OpenMP threads for DTW (NumPy's own threading elsewhere).
+of threads (`THREADS`, default 8): the kdb+ engine's secondary threads (`-s`; `peach` over drones
+for signatures, anomaly, block means and FFTs), and the DuckDB lane's OpenMP threads for DTW
+(elsewhere NumPy: its matrix product runs in Accelerate, the rest on one thread).
 
 Each lane reports after every pass:
 `{type:"analytics", lane, took:{signatures,anomaly,swarm,rotor} (ms), newest (stime of the newest

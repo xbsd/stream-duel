@@ -13,7 +13,7 @@ You need KDB-X (q on your PATH, or at `~/.kx/bin/q`), [uv](https://docs.astral.s
 compiler. On macOS: `xcode-select --install` and `brew install libomp`.
 
 ```bash
-./start.sh                 # builds lib/kxfft.so if needed, starts every process
+./start.sh                 # builds the C libraries in lib/ if needed, starts every process
 open stream-duel.html      # the page; give it a minute to collect 60 s of scores
 ./stop.sh                  # or "Shut down" on the page (click twice)
 ```
@@ -71,8 +71,8 @@ warping (DTW), which also matches a manoeuvre flown faster or slower.
 | Shape search | `.ai.tss.tss` (KDB-X AI libraries) | NumPy (z-normalized distance profile) |
 | DTW | `.ai.dtw.search` (KDB-X) | dtaidistance (C, OpenMP) with KDB-X's definition, in a worker process |
 | Anomaly | `.ai.tss.tssdist` | NumPy |
-| Swarm | q matrix multiply (`mmu`) | NumPy matrix multiply |
-| Rotor FFT | **KissFFT through the KX C interface** (`c/kx_fft.c`, loaded with `2:`) | `numpy.fft` |
+| Swarm | **Apple Accelerate's BLAS through the KX C interface** (`c/kx_blas.c`), the library NumPy uses | NumPy matrix multiply (Accelerate) |
+| Rotor FFT | **KissFFT through the KX C interface** (`c/kx_fft.c`, loaded with `2:`), one call per thread | `numpy.fft` |
 
 Both lanes use the same definitions, templates (`templates.json`) and thresholds (`config.json`).
 `tests/test_crosscheck.py` runs the DuckDB lane's code on the rows the kdb+ lane analysed and
@@ -88,14 +88,15 @@ checks every distance, score, correlation, group and frequency is identical.
 | 64K (13.1M) | 1.1 / 16.6 ms | 16.6 / 86.7 ms | yes |
 | 256K (52M) | | | no: the feed and the shared tickerplant saturate first and drop rows for both lanes |
 
-One analytics pass over 1,024 drones (819,200 samples): kdb+ about 90 ms, DuckDB about 195 ms.
-With DTW shape search: kdb+ about 340 ms, DuckDB about 430 ms, and DuckDB's p99 lag rises to about
-3.5 ms while kdb+'s stays under 0.5 ms.
+One analytics pass over 1,024 drones (819,200 samples): kdb+ about 40 ms, DuckDB about 200 ms
+(signatures 19 vs 109 ms, anomaly 3 vs 55, swarm 7 vs 10, rotor 1 vs 3). With DTW shape search:
+kdb+ about 265 ms, DuckDB about 360 ms (signatures 242 vs 269 ms: both run compiled DTW on 8
+threads), and DuckDB's p99 lag rises to 2-3.5 ms while kdb+'s stays under 0.5 ms.
 
 At 1,024 drones both lanes find the planted events at the same rates: every dive, payload release,
 hidden swarm and laden rotor; 93-99% of hovers and jinks; about 90% of jamming bursts. False
 alarms per minute: 5-20 for dives and for payload releases, 0-5 for hovers and jinks, 20-80 for
-jamming, none for swarms and at most one for rotors.
+jamming, and rarely any for swarms or rotors (a chance group of drones in one pass can add a few).
 
 Keep 256K for showing the system's ceiling, not as an engine comparison: there both lanes lose
 rows because the shared pipeline can't produce or forward 52M rows a second on one laptop.
@@ -110,7 +111,12 @@ rows because the shared pipeline can't produce or forward 52M rows a second on o
   dtaidistance holds Python's GIL while it computes, and DuckDB's inserts need the GIL (in the
   bridge's own process DTW raised its p99 lag from 2 ms to 16 ms).
 - Both lanes' analytics get the same threads (`THREADS=8`): the kdb+ engine's secondary threads,
-  and dtaidistance's OpenMP threads.
+  and dtaidistance's OpenMP threads. kdb+ also spreads block means and FFTs over its threads with
+  `peach`; NumPy has no built-in parallelism for those and runs them on one thread.
+- Both lanes multiply matrices (the swarm correlations) with the same library: Apple Accelerate's
+  BLAS, which NumPy links on macOS and the kdb+ lane calls through the KX C API (`lib/kxblas.so`).
+  q's own `mmu` took 24 ms for that product against Accelerate's 2 ms. On Linux the build uses
+  OpenBLAS or another CBLAS; without one, q falls back to `mmu` spread over threads.
 - Both lanes analyse once a second on a fixed schedule, and both end every drone's window at the
   same instant (feed handler shards publish a few milliseconds apart; drones shifted by even one
   sample against each other no longer correlate as a swarm).
@@ -124,7 +130,7 @@ rows because the shared pipeline can't produce or forward 52M rows a second on o
 | `gen.q` | telemetry-kit's signal generator plus planted events, classes and groups; `planted[]` lists them |
 | `fh.q`, `tp.q` | feed handlers and the tickerplant (ports 5120+, 5110) |
 | `rdb.q`, `rte.q`, `analytics.q` | the kdb+ lane: storage and stats (5111), real-time engine (5112), the pattern matching |
-| `c/kx_fft.c`, `c/build.sh` | KissFFT exposed to q through the KX C API (`lib/kxfft.so`) |
+| `c/kx_fft.c`, `c/kx_blas.c`, `c/build.sh` | KissFFT and the platform BLAS exposed to q through the KX C API (`lib/kxfft.so`, `lib/kxblas.so`) |
 | `bridge/` | the DuckDB lane (5130): `store.py`, `analytics.py`, `server.py` |
 | `config.json`, `templates.json` | shared thresholds and signature templates |
 | `tools/templates.q`, `tools/calibrate.q`, `tools/fixture.q` | write templates, choose thresholds against planted truth, write the cross-check fixture |
@@ -134,7 +140,7 @@ rows because the shared pipeline can't produce or forward 52M rows a second on o
 ## Tests
 
 ```bash
-q tests/test_fft.q && q tests/test_gen.q   # the C FFT and the generator, against known answers
+q tests/test_fft.q && q tests/test_blas.q && q tests/test_gen.q   # the C libraries and the generator
 uv run pytest                              # the cross-check and the DuckDB store
 q tools/calibrate.q -s 8                   # precision and recall of every feature against planted events
 ```

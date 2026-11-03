@@ -1,10 +1,16 @@
 / analytics.q: the kdb+ lane's real-time pattern matching (DESIGN.md, "The analytics").
 / Loaded by rdb.q (live) and tools/calibrate.q (thresholds). Everything runs in q next to the
-/ data: KDB-X's AI libraries (.ai.tss, .ai.dtw) and KissFFT through the KX C API (lib/kxfft.so).
-/ peach spreads the per-drone work over secondary threads when q runs with -s N.
+/ data: KDB-X's AI libraries (.ai.tss, .ai.dtw), KissFFT through the KX C API (lib/kxfft.so) and the
+/ platform BLAS through it too (lib/kxblas.so). peach spreads the per-drone work over secondary
+/ threads when q runs with -s N.
 
 .ai:use`kx.ai
 fftpeak:`:lib/kxfft 2:(`fftpeak;5)
+/ the rows of a matrix in one chunk per secondary thread, for peach (one chunk without threads)
+chunks:{(1|ceiling count[x]%1|system"s") cut x}
+/ gram[X]: X mmu flip X through the platform BLAS (lib/kxblas.so: Apple Accelerate on macOS, the
+/ library NumPy multiplies with there). Where it isn't built, q's mmu with the rows spread over threads.
+gram:@[`:lib/kxblas 2:;(`gram;1);{[e] {raze mmu[;flip x] peach chunks x}}]
 CFG:.j.k raze read0`:config.json
 TPL:.j.k raze read0`:templates.json                  / sig -> channel -> template (floats)
 SIGS:key TPL
@@ -14,7 +20,7 @@ toMs:{`long$UNIXMS+1e-6*`long$x}                      / q timestamp -> unix ms (
 
 zn:{s:dev x; $[s>1e-12;(x-avg x)%s;0f*x]}
 down:{[x;f] avg each f cut x}                          / block means: hz -> ana_hz (one series)
-downM:{[M;f] flip avg each f cut flip M}               / the same for every row of a matrix, column-wise
+downM:{[M;f] raze {[f;M] flip avg each f cut flip M}[f] peach chunks M}  / every row of a matrix
 
 / win[tbl;W;secs;hz]: the newest secs seconds of drones 1..W from a telem-like table sampled at
 / hz, ending for every drone at one instant: the newest sample time all of them have reached.
@@ -72,7 +78,7 @@ anomalies:{[w;f]
 / A coordinated group flies one waveform, so its members correlate at ~1.0; min_r is set just below
 / that (config.json), which drones that merely fly the same manoeuvre at the same time do not reach.
 / Requiring both channels keeps chance correlations among a thousand drones from forming groups.
-corr:{[w;f;c] X:zn each flip 1_ deltas flip downM[w c;f]; (X mmu flip X)%count first X}
+corr:{[w;f;c] X:{zn 1_ deltas x} peach downM[w c;f]; gram[X]%count first X}
 swarms:{[w;f]
   C:corr[w;f;`alt]&corr[w;f;`ias];
   adj:C>CFG[`swarm;`min_r];
@@ -82,11 +88,12 @@ swarms:{[w;f]
   gs:gs where (count each gs)>=CFG[`swarm;`min_size];
   {x y}[w`uav] each gs}
 
-/ rotor: dominant rpm frequency (KissFFT via the C API), nearest class frequency, laden or not.
+/ rotor: dominant rpm frequency (KissFFT via the C API, one call per thread's share of the drones),
+/ nearest class frequency, laden or not.
 rotor:{[w]
   c:CFG`rotor; n:`long$c`n;
   if[n>w`n; :flip `uav`hz`cls`laden!(();();();())];
-  pk:fftpeak[raze (neg n)#'w`rpm;n;`float$w`hz;`float$c`lo;`float$c`hi];
+  pk:raze {[c;n;hz;R] fftpeak[raze (neg n)#'R;n;hz;`float$c`lo;`float$c`hi]}[c;n;`float$w`hz] peach chunks w`rpm;
   cand:(`float$c`classes),(c`laden)*`float$c`classes;
   j:{x?min x} each abs pk-\:cand;
   flip `uav`hz`cls`laden!(w`uav;pk;`A`B`C j mod 3;j>=3)}
