@@ -54,5 +54,7 @@ EVERY:`timespan$1000000*`long$CFG`every_ms
 TPH:hopen `$"::",string TPP
 RDBH:hopen `$"::",string RDBP
 TPH(".u.sub";`telem;`rte);
+/ without the tickerplant or the RDB there is nothing to analyse or nobody to tell: stop
+.z.pc:{if[x in TPH,RDBH; -1"lost the ",$[x=TPH;"tickerplant";"RDB"],", stopping"; exit 0]}
 \t 100
 -1"kdb+ lane: real-time engine on ",string[system"p"],", subscribed to tickerplant ",string[TPP],", ",string[system"s"]," secondary thread(s)";

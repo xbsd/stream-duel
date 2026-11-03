@@ -73,9 +73,11 @@ clearRdb:{
 setMode:{[m] if[m in `tss`dtw; MODE::m; toRte (`setMode;m)]; `type`lane`mode!(`mode;`kdb;MODE)}
 
 / stop the kdb+ side (the page's "Shut down" button; the bridge stops itself on the same click)
+/ Sync calls, so each process has exited before this one does: an async "exit 0" to the real-time
+/ engine was lost when the RDB exited right after, leaving the engine running.
 shutdown:{
   (neg WS)@\:.j.j `type`lane!(`shutdown;`kdb);
-  {@[x;"exit 0";{}]} each FHS,TPH; if[not null RTE; @[neg RTE;"exit 0";{}]];
+  {@[x;"exit 0";{}]} each FHS,TPH; if[not null RTE; @[RTE;"exit 0";{}]];
   @[hdel;`:logs/pids;{}];
   -1"shut down from the page";
   .z.ts:{exit 0}; system"t 200";}
