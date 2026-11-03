@@ -1,5 +1,5 @@
 / fh.q: synthetic drone feed handler
-/ q fh.q -p 5020 -shard 0 -of 1 -tp 5010
+/ q fh.q -p 5120 -shard 0 -of 1 -tp 5110   (Stream Duel ports, DESIGN.md)
 / Owns the drones where id mod <of> = <shard>. Every 10 ms it generates every
 / sample due since the last tick and publishes them to the tickerplant.
 \l gen.q
@@ -7,7 +7,7 @@ o:.Q.opt .z.x
 arg:{[k;d] $[k in key o;first o k;d]}
 SHARD:"J"$arg[`shard;"0"]
 OF:"J"$arg[`of;"1"]
-TPH:hopen `$"::",arg[`tp;"5010"]
+TPH:hopen `$"::",arg[`tp;"5110"]
 ALERTP:0.006
 N:0; HZ:200; STEP:5000000; ids:`long$(); P:(); KLAST:0; CH:1000000
 ALC:(`long$())!()
@@ -39,7 +39,7 @@ emit:{[ks]
   kk:ks where m#n;
   ts:1e-9*(kk*STEP) mod 1024000000000;
   p:P[;ix];
-  v:sig[ts;p;alertRows[ts;ix]];
+  v:sigDuel[ts;p;alertRows[ts;ix];1+ids ix];                 / planted events on drones 1..WATCH
   st:`timestamp$(kk*STEP)-946684800000000000;
   neg[TPH](".u.upd";`telem;(st;`int$1+ids ix;`real$120+38*v 1;`real$18+7*v 2;`real$7200+1500*v 3;`real$2.4*v 0));
  }

@@ -77,8 +77,9 @@ sigDuel:{[ts;p;al;uav]
   act:ev and (tau>=0) and tau<DUR ty;
   if[count i:where act and ty=0;                               / dive and pull up
     r:sin (acos -1)*tau[i]%3; alt[i]-:1.2*r; ias[i]+:1.15*r];
-  if[count i:where act and ty=1;                               / payload release: jolt, rotor spins up
-    imu[i]+:1.6*exp neg (tau[i]%0.06) xexp 2; rpm[i]+:0.25*1-exp neg tau[i]%0.2];
+  if[count i:where act and ty=1;                               / payload release: jolt and ring-down, rotor spins up
+    imu[i]+:(1.6*exp neg (tau[i]%0.06) xexp 2)+0.9*(exp neg tau[i]%0.35)*sin TAU*2.5*tau i;
+    rpm[i]+:0.25*1-exp neg tau[i]%0.2];
   if[count i:where act and ty=2;                               / hover and stare
     m:1&2*min(tau[i];5-tau[i]); ias[i]:(ias[i]*1-m)+m*-2.4; alt[i]:alt[i]*1-m];
   if[count i:where act and ty=3;                               / evasive jinking
