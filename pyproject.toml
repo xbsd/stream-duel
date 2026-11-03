@@ -1,0 +1,23 @@
+[project]
+name = "stream-duel"
+version = "0.1.0"
+description = "Streaming ingest and real-time pattern matching: kdb+ (KDB-X) and DuckDB on the same tickerplant feed"
+requires-python = ">=3.11"
+dependencies = [
+  "pykx>=3.0",
+  "duckdb>=1.1",
+  "numpy>=1.26",
+  "dtaidistance>=2.3",
+  "websockets>=12",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.uv]
+package = false
+# dtaidistance's macOS wheel links a missing libomp path; build from source (as in Kairos D-064).
+no-binary-package = ["dtaidistance"]
+
+[tool.ruff]
+line-length = 100

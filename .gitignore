@@ -2,3 +2,9 @@ logs/
 hdb/
 telem_*.log
 .DS_Store
+lib/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+data/
