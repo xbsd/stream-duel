@@ -226,11 +226,14 @@ async def run(args: argparse.Namespace) -> None:
             if cols is not None:
                 lane.pending += len(cols["uav"])
                 lane.q.put(cols)
+            # yield after every batch: when the tickerplant always has data waiting, a loop that
+            # only yields on an empty socket starves the stats, analytics and the page's socket
+            await asyncio.sleep(0)
 
     async def stats_loop() -> None:
         while not lane.stop.is_set():
-            try:
-                d = tp(".u.drops[]").py()
+            try:  # off the event loop: a busy tickerplant can take a while to answer
+                d = await asyncio.to_thread(lambda: tp(".u.drops[]").py())
                 lane.dropped = int(d.get("duckdb", 0))
             except Exception as e:  # noqa: BLE001 - the tickerplant may be gone at shutdown
                 log.debug("drop count unavailable: %s", e)

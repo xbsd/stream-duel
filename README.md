@@ -18,7 +18,8 @@ open stream-duel.html      # the page; give it a minute to collect 60 s of score
 ./stop.sh                  # or "Shut down" on the page (click twice)
 ```
 
-Keys 1 to 7 on the page set the fleet: 64, 256, 1K, 4K, 16K, 64K or 256K drones at 200 samples per
+OFF (key 0) stops the drones; both lanes keep running and keep their rows, and any fleet size
+starts them again. Keys 1 to 7 set the fleet: 64, 256, 1K, 4K, 16K, 64K or 256K drones at 200 samples per
 second each (12.8K to 52M rows per second).
 
 ## What you see
@@ -61,8 +62,8 @@ warping (DTW), which also matches a manoeuvre flown faster or slower.
        ┌─────────┼──────────────────────────┐
   rdb.q (kdb+)  rte.q (kdb+)            bridge/ (Python, DuckDB)
   stores rows   real-time engine:       subscribes over kdb+ IPC (PyKX, no q runtime),
-  lag, stats    keeps the watched       appends to in-memory DuckDB, lag after commit,
-  websocket     drones' last seconds,   extracts the window with SQL, matches in
+  lag, stats    subscribes to the       appends to in-memory DuckDB, lag after commit,
+  websocket     watched drones only,    extracts the window with SQL, matches in
                 matches in q            NumPy and dtaidistance; websocket
 ```
 
@@ -120,8 +121,14 @@ rows because the shared pipeline can't produce or forward 52M rows a second on o
 - Both lanes analyse once a second on a fixed schedule, and both end every drone's window at the
   same instant (feed handler shards publish a few milliseconds apart; drones shifted by even one
   sample against each other no longer correlate as a swarm).
-- If the DuckDB bridge falls behind it stops reading, and the tickerplant drops and counts rows for
-  it instead of letting its queue grow; the page shows those drops.
+- If either lane falls behind, the tickerplant drops and counts rows for it instead of letting its
+  queue grow; the page shows those drops. The bridge yields after every batch, so it keeps
+  reporting even when the tickerplant always has data waiting.
+- kdb+'s real-time engine subscribes to the watched drones only (kdb+tick's filtered subscription),
+  so the tickerplant never has to drop its rows. The DuckDB lane analyses its store, so when the
+  tickerplant drops rows for that lane, its analysis loses them too. Past about 96K drones the
+  one tickerplant on this laptop drops rows for both stores alike: there the pipeline is the limit,
+  not either engine.
 
 ## Files
 

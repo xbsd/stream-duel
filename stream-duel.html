@@ -33,6 +33,8 @@ h1 span { font-weight: 400; color: var(--ink-2); margin-left: 10px; font-size: 1
 .fleet { display: flex; gap: 2px; }
 .fleet button, .seg button { border: 1px solid var(--rule); background: transparent; padding: 4px 9px; cursor: pointer; border-radius: 3px; }
 .fleet button[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.fleet button.off { color: var(--alert); border-color: var(--alert); font-weight: 600; margin-right: 6px; }
+.fleet button.off[aria-pressed="true"] { background: var(--alert); color: #fff; border-color: var(--alert); }
 .seg { display: inline-flex; }
 .seg button { border-radius: 0; }
 .seg button:first-child { border-radius: 3px 0 0 3px; }
@@ -282,7 +284,12 @@ function drawSpine() {
     g.stroke();
   }
   const k = LANES.kdb.stats, d = LANES.duck.stats, v = document.getElementById("verdict");
-  if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
+  if (st.fleet === 0) {
+    v.innerHTML = ""; v.append("Feed off");
+    const small = document.createElement("small");
+    small.textContent = "No drones are flying. Pick a fleet size to start them; both lanes keep what they stored.";
+    v.append(small);
+  } else if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
     const r = d.lag.p99 / k.lag.p99;
     v.innerHTML = "";
     v.append(r >= 1 ? `kdb+ is ${r.toFixed(r < 10 ? 1 : 0)}× fresher` : `DuckDB is ${(1 / r).toFixed(1)}× fresher`);
@@ -379,22 +386,27 @@ function renderGrid(id) {
 
 /* ---- controls ---- */
 const fleetEl = document.getElementById("fleet");
-FLEET.forEach((n, k) => {
+[0, ...FLEET].forEach((n, k) => {
   const b = document.createElement("button");
-  b.type = "button"; b.textContent = n >= 1024 ? `${n / 1024}K` : `${n}`;
-  b.title = `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows per second (key ${k + 1})`;
+  b.type = "button"; b.dataset.n = n;
+  b.textContent = n === 0 ? "OFF" : n >= 1024 ? `${n / 1024}K` : `${n}`;
+  b.title = n === 0 ? "Feed off: the drones stop, both lanes keep running and keep their rows (key 0)"
+    : `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows per second (key ${k})`;
+  if (n === 0) b.className = "off";
   b.setAttribute("aria-pressed", String(n === st.fleet));
   b.onclick = () => setFleet(n);
   fleetEl.append(b);
 });
 function setFleet(n) {
   st.fleet = n;
-  for (const b of fleetEl.children) b.setAttribute("aria-pressed", String(b.title.startsWith(fmt.format(n) + " ")));
+  for (const b of fleetEl.children) b.setAttribute("aria-pressed", String(Number(b.dataset.n) === n));
   sendBoth({ cmd: "fleet", n, hz: HZ });
+  for (const id of Object.keys(LANES)) renderGrid(id);
+  drawSpine();
 }
 document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, select, textarea")) return;
-  const k = Number(e.key); if (k >= 1 && k <= FLEET.length) setFleet(FLEET[k - 1]);
+  const k = Number(e.key); if (e.key.trim() && k >= 0 && k <= FLEET.length) setFleet(k ? FLEET[k - 1] : 0);
 });
 for (const b of document.querySelectorAll(".seg button")) b.onclick = () => {
   st.mode = b.dataset.mode;

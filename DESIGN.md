@@ -10,8 +10,9 @@ Built for an internal KX audience. Everything is synthetic.
 | Process | Port | Lane | Job |
 |---|---|---|---|
 | `fh.q` (one or more) | 5120 + shard | both | Feed handlers: deterministic telemetry with planted events (`gen.q`) |
-| `tp.q` | 5110 | both | Tickerplant: stamps each batch, publishes it to both subscribers; a subscriber that falls more than `-maxq` MB behind is skipped and its dropped rows are counted |
-| `rdb.q` | 5111 | kdb+ | RDB: stores `telem`, measures lag, runs the analytics in q, serves the page over a websocket |
+| `tp.q` | 5110 | both | Tickerplant: stamps each batch, publishes it to its subscribers; a subscriber that falls more than `-maxq` MB behind is skipped and its dropped rows are counted per lane. `.u.subw` subscribes to drones 1..w only, as kdb+tick's subscription to a sym list |
+| `rdb.q` | 5111 | kdb+ | RDB: stores `telem`, measures lag, serves the page over a websocket and relays the real-time engine's results |
+| `rte.q` | 5112 | kdb+ | Real-time engine: subscribes to the 1,024 watched drones only (`.u.subw`), keeps their last seconds, runs `analytics.q` every second |
 | `bridge/` (Python) | 5130 | DuckDB | Subscribes to the tickerplant over kdb+ IPC (PyKX, unlicensed: no q runtime), appends to an in-memory DuckDB, measures lag, runs the analytics, serves the page over a websocket |
 | `stream-duel.html` | | | The page: two lanes, opened as a file |
 
