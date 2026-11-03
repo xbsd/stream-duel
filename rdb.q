@@ -7,6 +7,7 @@
 \l schema.q
 \l gen.q                               / planted[] and airClass for the page's scoring only
 \l analytics.q
+\P 15                                  / JSON floats keep 15 digits (q's default is 7)
 o:.Q.opt .z.x
 arg:{[k;d] $[k in key o;first o k;d]}
 TPP:"J"$arg[`tp;"5110"]
@@ -30,7 +31,9 @@ FHS:{hopen `$"::",string x} each FH0+til SHARDS
 RTE:0Ni                                 / the real-time engine's handle, set by its first relay
 toRte:{[m] if[not null RTE; @[neg RTE;m;{RTE::0Ni}]]}
 setFleet:{[n;hz] N::n; HZ::hz; (neg FHS)@\:(`setFleet;n;hz); toRte (`setFleet;n;hz); RATE::0f;}
-relay:{[r] RTE::.z.w; send r}            / analytics from the real-time engine, to the page
+PLANTED:""                             / the latest planted-events JSON, for new pages
+relay:{[s] RTE::.z.w; if[count WS; (neg WS)@\:s]}             / RTE analytics (JSON), to the page
+relayPlanted:{[s] RTE::.z.w; PLANTED::s; if[count WS; (neg WS)@\:s]}
 
 / row-weighted lag percentiles over the last 5 s of batches
 lagStats:{
@@ -78,7 +81,7 @@ shutdown:{
   .z.ts:{exit 0}; system"t 200";}
 
 send:{[m] if[count WS; (neg WS)@\:.j.j m]}
-.z.wo:{WS::distinct WS,x; neg[x] .j.j planted60[]}
+.z.wo:{WS::distinct WS,x; if[count PLANTED; neg[x] PLANTED]}
 .z.wc:{WS::WS except x}
 .z.ws:{
   d:.j.k x; c:`$d`cmd;
@@ -97,7 +100,6 @@ send:{[m] if[count WS; (neg WS)@\:.j.j m]}
   RATE::(0.6*RATE)+0.4*r;
   if[MAXROWS<count telem; telem::(neg KEEP)#telem];
   send stats[];
-  if[(null LASTP) or 1000<=1e-6*`long$now-LASTP; LASTP::now; send planted60[]];
  }
 
 TPH:hopen `$"::",string TPP

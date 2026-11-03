@@ -54,7 +54,9 @@ evType:{[uav;s] (`long$floor 5*h01 h2[(uav+101) mod M32;s]) mod 5}
 evStart:{[uav;s] 2+10*h01 h2[(uav+202) mod M32;s]}
 grpOf:{[uav] (uav-1) div 6}
 grpOn:{[g;s] PGRP>h01 h2[(g+404) mod M32;s]}
-grpP:{[g] {h01 h2[(x+500) mod M32;y]}[g] each 1+til 8}       / the group's 8 shared parameters
+/ the group's 8 shared parameters: keyed apart from every drone's own (h2[id;1..8] in fh.q), so no
+/ drone flies a group's waveform by accident (g+500 once collided with drone id g+500)
+grpP:{[g] {h01 h2[(x+1000003) mod M32;64+y]}[g] each 1+til 8}
 
 / sigDuel: like sig, plus classes, events and groups. ts: wrapped seconds; p: 8 parameter vectors;
 / al: telemetry-kit's alert flags; uav: drone ids (1-based). Returns normalized (imu;alt;ias;rpm).

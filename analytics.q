@@ -10,10 +10,11 @@ TPL:.j.k raze read0`:templates.json                  / sig -> channel -> templat
 SIGS:key TPL
 MODE:`$CFG`mode                                       / `tss or `dtw, switchable from the page
 UNIXMS:946684800000f
-toMs:{UNIXMS+1e-6*`long$x}                            / q timestamp -> unix ms (float)
+toMs:{`long$UNIXMS+1e-6*`long$x}                      / q timestamp -> unix ms (long: JSON keeps every digit)
 
 zn:{s:dev x; $[s>1e-12;(x-avg x)%s;0f*x]}
-down:{[x;f] avg each f cut x}                          / block means: hz -> ana_hz
+down:{[x;f] avg each f cut x}                          / block means: hz -> ana_hz (one series)
+downM:{[M;f] flip avg each f cut flip M}               / the same for every row of a matrix, column-wise
 
 / win[tbl;W;secs;hz]: the newest secs seconds of drones 1..W from a telem-like table sampled at
 / hz. Returns `uav`newest`hz`n`alt`ias`rpm`imuz! with one row per drone in each W' x n matrix.
@@ -36,7 +37,7 @@ sigDist:{[mode;s;tp]
   (first[r 0]%sqrt m;first r 1)}
 / sigTable: nsig x W distances and match start indexes (downsampled samples), before thresholds.
 sigTable:{[mode;w;f]
-  D:`alt`ias`imuz!{[w;f;c] down[;f] each w c}[w;f] each `alt`ias`imuz;
+  D:`alt`ias`imuz!{[w;f;c] downM[w c;f]}[w;f] each `alt`ias`imuz;
   per:{[mode;D;s]                                     / per signature: (W distances; W start indexes)
     tp:TPL s; cs:key tp;
     r:{[mode;D;tp;c] sigDist[mode;;`float$tp c] peach D c}[mode;D;tp] each cs;
@@ -50,26 +51,28 @@ signatures:{[mode;w;f]
   hit:where bd<th b;
   t0:toMs[w`newest]-1000*st[`n]%CFG`ana_hz;          / ms of the first downsampled sample
   bi:{x[y;z]}[idx]'[b hit;hit];
-  flip `uav`sig`dist`at!(w[`uav] hit;SIGS b hit;bd hit;t0+1000*bi%CFG`ana_hz)}
+  flip `uav`sig`dist`at!(w[`uav] hit;SIGS b hit;bd hit;`long$t0+1000*bi%CFG`ana_hz)}
 
 / anomaly: the newest window's z-normalized distance to its nearest match earlier in the series
 / (the left matrix-profile value a discord detector computes), with .ai.tss.tssdist.
 discord:{[m;x] k:count[x]-m; min .ai.tss.tssdist[k#x;x k+til m;::]}
 anomalies:{[w;f]
   m:`long$CFG[`anomaly;`window_s]*CFG`ana_hz;
-  s:discord[m;] peach down[;f] each w`imuz;
+  s:discord[m;] peach downM[w`imuz;f];
   hit:where s>CFG[`anomaly;`threshold];
   flip `uav`score!(w[`uav] hit;s hit)}
 
-/ swarm: drones whose altitude and airspeed changes both move together (pairwise correlation
-/ over the window, the lower of the two), grouped into connected components of min_size or more.
+/ swarm: drones whose altitude and airspeed both move together (pairwise correlation over the
+/ window, the lower of the two), grouped into connected components of min_size or more.
+/ A coordinated group flies one waveform, so its members correlate at ~1.0; min_r is set just below
+/ that (config.json), which drones that merely fly the same manoeuvre at the same time do not reach.
 / Requiring both channels keeps chance correlations among a thousand drones from forming groups.
-corr:{[w;f;c] X:zn each 1_'deltas each down[;f] each w c; (X mmu flip X)%count first X}
+corr:{[w;f;c] X:zn each flip 1_ deltas flip downM[w c;f]; (X mmu flip X)%count first X}
 swarms:{[w;f]
   C:corr[w;f;`alt]&corr[w;f;`ias];
   adj:C>CFG[`swarm;`min_r];
-  lab:til count adj;
-  while[not lab~l2:{min x where y}[lab] each adj; lab:l2];
+  nb:where each adj; lab:til count adj;                / neighbour lists once, then propagate labels
+  while[not lab~l2:min each lab nb; lab:l2];
   gs:value group lab;
   gs:gs where (count each gs)>=CFG[`swarm;`min_size];
   {x y}[w`uav] each gs}

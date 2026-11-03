@@ -26,7 +26,7 @@ UNIX_MS_2000 = 946684800000.0
 
 def to_ms(t: np.datetime64) -> float:
     """Sample time (datetime64 ns) as unix milliseconds, as analytics.q's toMs."""
-    return float(np.asarray(t).astype("datetime64[ns]").astype(np.int64)) / 1e6
+    return float(np.asarray(t).astype("datetime64[ns]").astype(np.int64) // 10**6)
 
 
 def zn(x: np.ndarray) -> np.ndarray:

@@ -34,10 +34,10 @@
   "anomaly": {
     "channel": "imuz",
     "window_s": 0.5,
-    "threshold": 3.944
+    "threshold": 4.5449
   },
   "swarm": {
-    "min_r": 0.9,
+    "min_r": 0.99,
     "min_size": 3,
     "channels": [
       "alt",

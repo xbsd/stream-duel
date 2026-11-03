@@ -46,6 +46,9 @@ win:raze {[d] 512#(v[3] row d)} each ok
 pk:fftpeak[win;512;`float$HZ;5f;40f]
 check["rotor peak = airframe class frequency (11/17/23 Hz) within 0.3 Hz"; all 0.3>abs pk-CLASSHZ airClass ok]
 check["all three airframe classes occur"; 3=count distinct airClass ok]
+/ no drone's own parameters equal a group's (that made drone g+501 fly group g's waveform)
+own:{h01 h2[til WATCH;x]} each 1+til 8; gp:grpP til ceiling WATCH%6
+check["no drone shares a coordinated group's parameters"; not any (flip own) in flip gp]
 check["planted lists only watched drones and known kinds"; all (pl[`uav]<=WATCH),pl[`kind] in EVT,`swarm`laden]
 -1 $[fails;string[fails]," check(s) failed";"all generator checks passed"];
 exit 0<fails

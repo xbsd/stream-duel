@@ -31,7 +31,7 @@ evalWin:{[mode;e]
   w:win[(rows e)#tbl;W;CFG`window_s;HZ];
   st:sigTable[mode;w;f];
   m:`long$CFG[`anomaly;`window_s]*CFG`ana_hz;
-  an:discord[m;] peach down[;f] each w`imuz;
+  an:discord[m;] peach downM[w`imuz;f];
   `e`uav`dist`anom!(e;w`uav;st`dist;an)}
 / labels: signature s is positive for drone u in window ending e when the window holds a planted
 / s's onset and at least the template's length of it (all of it, for events shorter than the
@@ -43,11 +43,13 @@ lab:{[s;u;e]
   need:TLEN[s]&ev[`t1]-ev`t0;
   have:(e&ev`t1)-ev`t0;
   $[any (ev[`t0]>=e-CFG`window_s) and have>=need-0.02;1;0N]}
-best:{[sc;y]                                                  / threshold with the best F1 (low = hit)
+/ threshold with the best F1 (low score = hit); with pmin>0, the best recall at precision >= pmin
+best:{[sc;y;pmin]
   k:where not null y; sc:sc k; y:y k;
   if[(0=sum y) or 0=sum not y; :`th`p`r`f1`n!(0n;0n;0n;0n;count y)];
   c:asc distinct sc;
   r:{[sc;y;t] h:sc<=t; tp:sum h&y; p:tp%1|sum h; rc:tp%sum y; (t;p;rc;2*p*rc%1e-9|p+rc)}[sc;y] each c;
+  if[pmin>0; ok:where r[;1]>=pmin; if[count ok; r:r ok; b:r {x?max x} r[;2]; :`th`p`r`f1`n!(b 0;b 1;b 2;b 3;count y)]];
   b:r {x?max x} r[;3];
   `th`p`r`f1`n!(b 0;b 1;b 2;b 3;count y)}
 RES:`tss`dtw!2#enlist (`$())!()                              / mode -> feature -> result
@@ -57,7 +59,7 @@ RES:`tss`dtw!2#enlist (`$())!()                              / mode -> feature -
   {[mode;E;s] i:SIGS?s;
     sc:raze {x[`dist] y}[;i] each E;
     y:raze {[s;x] lab[s;;x`e] each x`uav}[s] each E;
-    b:best[sc;`long$y];
+    b:best[sc;`long$y;0];
     RES[mode;s]:b;
     -1"  ",(-8$string s)," threshold ",(-7$string .01*`long$100*b`th),
       " precision ",(-5$string .01*`long$100*b`p)," recall ",(-5$string .01*`long$100*b`r),
@@ -68,17 +70,22 @@ RES:`tss`dtw!2#enlist (`$())!()                              / mode -> feature -
     y:raze {[x] {[u;e] j:select from pl where uav=u, kind=`jam, t1>e-0.5, t0<e;
       a:select from pl where uav=u, t1>e-CFG`window_s, t0<e, kind<>`laden;
       $[count j;1;count a;0N;0]}[;x`e] each x`uav} each E;
-    b:best[neg sc;`long$y]; b[`th]:neg b`th;                 / anomaly: high score = hit
+    b:best[neg sc;`long$y;0.97]; b[`th]:neg b`th;            / anomaly: high score = hit; precision >= 0.97
+                                                              / (1024 drones scored every second: false alarms add up)
     RES[`tss;`anomaly]:b;
     -1"  anomaly  threshold ",(-7$string .01*`long$100*b`th)," precision ",(-5$string .01*`long$100*b`p),
       " recall ",(-5$string .01*`long$100*b`r)," (jam in the newest 0.5 s against event-free windows)"];
  } each `tss`dtw;
-/ swarm and rotor, on one window inside a slot
+/ swarm: every 4 s along the run; a found member is true when its group was coordinated for the
+/ whole window, false when it was not coordinated at any time in the window (else not counted)
+sws:{[e] w:win[(rows e)#tbl;W;CFG`window_s;HZ]; found:distinct raze swarms[w;f];
+  full:exec distinct uav from pl where kind=`swarm, t0<=e-CFG`window_s, t1>=e;
+  any_:exec distinct uav from pl where kind=`swarm, t1>e-CFG`window_s, t0<e;
+  (count found inter full;count found except any_;count full)} each ends where 0=(til count ends) mod 4
+s:sum sws
+-1"\nswarm (min_r ",string[CFG[`swarm;`min_r]],", ",string[count sws]," windows): members precision ",string[.01*`long$100*s[0]%1|s[0]+s 1],
+  " recall ",string[.01*`long$100*s[0]%1|s 2],", false members ",string s 1;
 e:U0+(SLOT*(S0+2))+8; w:win[(rows e)#tbl;W;CFG`window_s;HZ]
-sw:swarms[w;f]; found:raze sw
-truth:exec distinct uav from pl where kind=`swarm, t0<=e-CFG`window_s, t1>=e
--1"\nswarm: ",string[count sw]," groups found; members precision ",string[.01*`long$100*(count found inter truth)%1|count found],
-  " recall ",string .01*`long$100*(count found inter truth)%1|count truth;
 ro:rotor w; busy:exec distinct uav from pl where t1>e-CFG`window_s, t0<e, kind<>`swarm
 ok:select from ro where not uav in busy
 -1"rotor: class accuracy on drones without events ",string .01*`long$100*avg (ok`cls)=`A`B`C airClass ok`uav;

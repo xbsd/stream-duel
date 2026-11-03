@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Duel</title>
+<style>
+:root {
+  --paper: #E8ECEF;
+  --paper-2: #DDE3E8;
+  --ink: #16212B;
+  --ink-2: #56636F;
+  --rule: #C3CCD3;
+  --kdb: #2445D6;
+  --duck: #B86E00;
+  --alert: #C8322B;
+  --cls-a: #CBD4DB;
+  --cls-b: #B9C4CD;
+  --cls-c: #A6B3BE;
+  --font: "Avenir Next", "Avenir", "Helvetica Neue", Arial, sans-serif;
+  --font-cond: "Avenir Next Condensed", "Avenir Next", "Arial Narrow", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font); }
+body { font-size: 14px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+button, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 28px; padding: 18px 28px 14px; border-bottom: 1px solid var(--rule); }
+h1 { margin: 0; font-family: var(--font-cond); font-weight: 600; font-size: 30px; letter-spacing: -0.01em; }
+h1 span { font-weight: 400; color: var(--ink-2); margin-left: 10px; font-size: 18px; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; margin-left: auto; }
+.fleet { display: flex; gap: 2px; }
+.fleet button, .seg button { border: 1px solid var(--rule); background: transparent; padding: 4px 9px; cursor: pointer; border-radius: 3px; }
+.fleet button[aria-pressed="true"], .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; }
+.seg button:first-child { border-radius: 3px 0 0 3px; }
+.seg button:last-child { border-radius: 0 3px 3px 0; }
+.ctl-label { color: var(--ink-2); }
+.danger { border: 1px solid var(--rule); background: transparent; padding: 4px 10px; border-radius: 3px; cursor: pointer; }
+.danger.armed { border-color: var(--alert); color: var(--alert); }
+
+main { display: grid; grid-template-columns: minmax(0, 1fr) 220px minmax(0, 1fr); }
+.lane { padding: 22px 28px 28px; min-width: 0; }
+.lane.duck { text-align: right; }
+.lane-head { display: flex; align-items: baseline; gap: 12px; }
+.duck .lane-head { flex-direction: row-reverse; }
+.lane-name { font-family: var(--font-cond); font-weight: 600; font-size: 22px; }
+.kdb .lane-name { color: var(--kdb); }
+.duck .lane-name { color: var(--duck); }
+.link { color: var(--ink-2); font-size: 13px; }
+.link.down { color: var(--alert); }
+.how { color: var(--ink-2); font-size: 13px; margin: 2px 0 14px; max-width: 46ch; }
+.duck .how { margin-left: auto; }
+
+.rate { font-family: var(--font-cond); font-weight: 600; font-size: 64px; line-height: 1; letter-spacing: -0.02em; }
+.kdb .rate { color: var(--kdb); }
+.duck .rate { color: var(--duck); }
+.rate-unit { color: var(--ink-2); font-size: 14px; margin-top: 4px; }
+.figs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 22px; margin: 16px 0 6px; justify-content: start; }
+.duck .figs { justify-content: end; }
+.fig b { display: block; font-size: 20px; font-weight: 600; }
+.fig span { color: var(--ink-2); font-size: 12.5px; }
+.fig.bad b { color: var(--alert); }
+
+section.block { margin-top: 22px; }
+.block h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--ink); }
+.grid-wrap { display: inline-block; }
+canvas.grid { width: 320px; height: 320px; display: block; image-rendering: pixelated; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--ink-2); margin-top: 8px; max-width: 360px; }
+.duck .legend { margin-left: auto; justify-content: flex-end; }
+.sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
+
+table.score, table.tap { border-collapse: collapse; width: 100%; max-width: 520px; font-size: 13px; }
+.duck table.score, .duck table.tap { margin-left: auto; }
+table.score th, table.score td, table.tap th, table.tap td { padding: 3px 8px; border-bottom: 1px solid var(--rule); text-align: right; white-space: nowrap; }
+table.score th:first-child, table.score td:first-child { text-align: left; }
+table.score th, table.tap th { font-weight: 600; color: var(--ink-2); font-size: 12px; }
+.bar { display: inline-block; height: 8px; vertical-align: 0; margin-left: 6px; }
+.kdb .bar { background: var(--kdb); }
+.duck .bar { background: var(--duck); }
+.muted { color: var(--ink-2); }
+
+.spine { border-left: 1px solid var(--rule); border-right: 1px solid var(--rule); padding: 22px 14px; text-align: center; background: var(--paper-2); }
+.spine h2 { font-size: 13px; font-weight: 600; margin: 0 0 4px; }
+.spine p { margin: 0 0 10px; color: var(--ink-2); font-size: 12.5px; }
+canvas#spine { width: 190px; height: 420px; display: block; margin: 0 auto; }
+.verdict { font-family: var(--font-cond); font-weight: 600; font-size: 34px; line-height: 1.05; margin-top: 14px; }
+.verdict small { display: block; font-family: var(--font); font-weight: 400; font-size: 12.5px; color: var(--ink-2); margin-top: 6px; }
+
+footer { border-top: 1px solid var(--rule); padding: 14px 28px 26px; color: var(--ink-2); font-size: 12.5px; }
+footer p { margin: 4px 0; max-width: 110ch; }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; }
+  .lane.duck { text-align: left; }
+  .duck .lane-head { flex-direction: row; }
+  .duck .figs, .duck .legend { justify-content: start; margin-left: 0; }
+  .duck table.score, .duck table.tap, .duck .how { margin-left: 0; }
+  .spine { border: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Stream Duel<span>One drone feed, two engines, measured live</span></h1>
+  <div class="controls">
+    <span class="ctl-label" id="fleetLabel">Fleet</span>
+    <div class="fleet" role="group" aria-labelledby="fleetLabel" id="fleet"></div>
+    <span class="ctl-label" id="modeLabel">Shape search</span>
+    <div class="seg" role="group" aria-labelledby="modeLabel">
+      <button type="button" data-mode="tss" aria-pressed="true">Z-normalized</button>
+      <button type="button" data-mode="dtw" aria-pressed="false">Time-warped (DTW)</button>
+    </div>
+    <label class="ctl-label"><input type="checkbox" id="showPlanted" checked> Outline planted events</label>
+    <button type="button" class="danger" id="clearBtn">Clear both lanes</button>
+    <button type="button" class="danger" id="stopBtn">Shut down</button>
+  </div>
+</header>
+
+<main>
+  <article class="lane kdb" data-lane="kdb" aria-label="kdb+ lane"></article>
+  <aside class="spine" aria-label="Freshness of each lane">
+    <h2>How fresh is each engine?</h2>
+    <p>Lag from tickerplant stamp to queryable, 99th percentile, last 60 s, log scale</p>
+    <canvas id="spine" width="380" height="840" aria-hidden="true"></canvas>
+    <div class="verdict" id="verdict" aria-live="polite">Waiting for both lanes</div>
+  </aside>
+  <article class="lane duck" data-lane="duck" aria-label="DuckDB lane"></article>
+</main>
+
+<footer>
+  <p>Both lanes receive exactly the same rows from one tickerplant on this machine. kdb+: an RDB stores the rows and a real-time engine subscribed to the same tickerplant runs the pattern matching in q, with KDB-X's AI libraries and KissFFT loaded through the KX C interface. DuckDB: a Python bridge subscribes over kdb+ IPC (PyKX, no q runtime), appends each batch to an in-memory DuckDB, and runs the same pattern matching after extracting the window with SQL, in NumPy and dtaidistance. DuckDB has no streaming server, so a bridge like this is what a DuckDB deployment has to build.</p>
+  <p>Both lanes run identical definitions, thresholds and templates; a test checks they return identical numbers on identical rows. Every figure on this page is measured as it happens. Planted events come from the generator's deterministic schedule and are used only to score the lanes.</p>
+</footer>
+
+<template id="laneTpl">
+  <div class="lane-head"><span class="lane-name"></span><span class="link down">not connected</span></div>
+  <p class="how"></p>
+  <div class="rate">0</div>
+  <div class="rate-unit">rows ingested per second</div>
+  <div class="figs">
+    <div class="fig" data-f="p50"><b>-</b><span>lag, median</span></div>
+    <div class="fig" data-f="p99"><b>-</b><span>lag, 99th pct</span></div>
+    <div class="fig" data-f="held"><b>-</b><span>rows held</span></div>
+    <div class="fig" data-f="mem"><b>-</b><span>memory</span></div>
+    <div class="fig" data-f="total"><b>-</b><span>rows since clear</span></div>
+    <div class="fig" data-f="dropped"><b>-</b><span>rows dropped</span></div>
+    <div class="fig" data-f="pass"><b>-</b><span>analytics pass</span></div>
+    <div class="fig" data-f="age"><b>-</b><span>analysed data age</span></div>
+  </div>
+  <section class="block">
+    <h2>What this engine sees in the watched drones</h2>
+    <div class="grid-wrap"><canvas class="grid" width="320" height="320" role="img"></canvas></div>
+    <div class="legend">
+      <span><i class="sw sig"></i>Signature match</span>
+      <span><i class="sw" style="background:var(--alert)"></i>Anomaly</span>
+      <span><i class="sw" style="background:var(--ink)"></i>Hidden swarm</span>
+      <span><i class="sw" style="background:var(--cls-a)"></i><i class="sw" style="background:var(--cls-b)"></i><i class="sw" style="background:var(--cls-c)"></i>Airframe A, B, C</span>
+      <span><i class="sw" style="background:transparent;outline:2px solid var(--ink);outline-offset:-2px"></i>Planted</span>
+    </div>
+  </section>
+  <section class="block">
+    <h2>Planted events found, last 60 s of watching</h2>
+    <table class="score"><thead><tr><th scope="col">Feature</th><th scope="col">Found</th><th scope="col">Planted</th><th scope="col">False alarms</th><th scope="col">Time per pass</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section class="block">
+    <h2>Newest rows</h2>
+    <table class="tap"><thead><tr><th scope="col">Stamped</th><th scope="col">Drone</th><th scope="col">Alt m</th><th scope="col">Speed m/s</th><th scope="col">Rotor rpm</th><th scope="col">Vert. accel</th></tr></thead><tbody></tbody></table>
+  </section>
+</template>
+
+<script>
+"use strict";
+const LANES = {
+  kdb: { name: "kdb+", url: "ws://localhost:5111", color: "--kdb",
+         how: "RDB stores every row; a real-time engine runs the matching in q next to the data." },
+  duck: { name: "DuckDB", url: "ws://localhost:5130", color: "--duck",
+          how: "A Python bridge appends each batch to DuckDB, extracts the window with SQL, matches in NumPy." },
+};
+const FLEET = [64, 256, 1024, 4096, 16384, 65536, 262144];
+const HZ = 200;
+const FEATURES = [
+  ["dive", "Dive"], ["payload", "Payload release"], ["hover", "Hover and stare"], ["jink", "Evasive jinking"],
+  ["jam", "Jamming (anomaly)"], ["swarm", "Hidden swarm"], ["laden", "Laden rotor"],
+];
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = new Intl.NumberFormat("en");
+const st = { fleet: 1024, mode: "tss", planted: [], classes: [] };
+
+for (const id of Object.keys(LANES)) {
+  const L = LANES[id];
+  const el = document.querySelector(`.lane[data-lane="${id}"]`);
+  el.append(document.getElementById("laneTpl").content.cloneNode(true));
+  el.querySelector(".lane-name").textContent = L.name;
+  el.querySelector(".how").textContent = L.how;
+  el.querySelector(".sw.sig").style.background = css(L.color);
+  el.querySelector("canvas.grid").setAttribute("aria-label", `Watched drones as ${L.name} sees them`);
+  Object.assign(L, { el, ws: null, up: false, stats: null, ana: null, reports: [], lagHist: [], since: null });
+}
+
+function send(id, o) { const ws = LANES[id].ws; if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function sendBoth(o) { send("kdb", o); send("duck", o); }
+
+function connect(id) {
+  const L = LANES[id];
+  let ws;
+  try { ws = new WebSocket(L.url); } catch (_) { setTimeout(() => connect(id), 2000); return; }
+  L.ws = ws;
+  ws.onopen = () => { L.up = true; setLink(id); send(id, { cmd: "fleet", n: st.fleet, hz: HZ }); send(id, { cmd: "mode", mode: st.mode }); };
+  ws.onclose = () => { L.up = false; setLink(id); setTimeout(() => connect(id), 2000); };
+  ws.onerror = () => {};
+  ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } onMsg(id, m); };
+}
+function setLink(id) {
+  const L = LANES[id], el = L.el.querySelector(".link");
+  el.textContent = L.up ? `connected on :${L.url.split(":").pop()}` : `not running on :${L.url.split(":").pop()}`;
+  el.classList.toggle("down", !L.up);
+}
+
+function onMsg(id, m) {
+  const L = LANES[id];
+  if (m.type === "stats") { L.stats = m; renderStats(id); pushLag(id, m); }
+  else if (m.type === "analytics" && m.took) { L.ana = m; addReports(id, m); renderGrid(id); renderScore(id); renderStats(id); }
+  else if (m.type === "planted") { st.planted = m.events || []; st.classes = m.classes || []; for (const k of Object.keys(LANES)) { renderGrid(k); renderScore(k); } }
+  else if (m.type === "shutdown") { L.up = false; setLink(id); }
+}
+
+/* ---- stats and the spine ---- */
+const ms = (v) => v == null ? "-" : v < 1 ? `${v.toFixed(2)} ms` : v < 1000 ? `${v.toFixed(v < 10 ? 1 : 0)} ms` : `${(v / 1000).toFixed(1)} s`;
+const bytes = (b) => { for (const [d, s] of [[1e9, "GB"], [1e6, "MB"], [1e3, "KB"]]) if (b >= d) return `${(b / d).toFixed(b / d < 10 ? 1 : 0)} ${s}`; return `${b} B`; };
+function setFig(L, k, v, bad) { const f = L.el.querySelector(`.fig[data-f="${k}"]`); f.querySelector("b").textContent = v; f.classList.toggle("bad", !!bad); }
+function renderStats(id) {
+  const L = LANES[id], s = L.stats;
+  if (s) {
+    L.el.querySelector(".rate").textContent = fmt.format(Math.round(s.rate));
+    setFig(L, "p50", ms(s.lag && s.lag.p50));
+    setFig(L, "p99", ms(s.lag && s.lag.p99));
+    setFig(L, "held", fmt.format(s.held));
+    setFig(L, "mem", bytes(s.mem));
+    setFig(L, "total", fmt.format(s.total));
+    setFig(L, "dropped", fmt.format(s.dropped || 0), (s.dropped || 0) > 0);
+    const body = L.el.querySelector("table.tap tbody");
+    body.innerHTML = "";
+    for (const r of (s.tap || []).slice(-8).reverse()) {
+      const tr = document.createElement("tr");
+      for (const v of [String(r.time).replace(/^0D/, "").slice(0, 12), r.uav, num(r.alt, 1), num(r.ias, 1), num(r.rpm, 0), num(r.imuz, 2)]) {
+        const td = document.createElement("td"); td.textContent = v; tr.append(td);
+      }
+      body.append(tr);
+    }
+  }
+  const a = L.ana;
+  if (a) {
+    const t = a.took, total = Object.values(t).reduce((x, y) => x + y, 0);
+    setFig(L, "pass", `${total} ms`);
+    setFig(L, "age", ms(Date.now() - a.newest), Date.now() - a.newest > 3000);
+  }
+}
+const num = (v, d) => v == null ? "-" : Number(v).toFixed(d);
+function pushLag(id, s) {
+  const L = LANES[id], now = Date.now();
+  if (s.lag && s.lag.p99 != null) L.lagHist.push([now, s.lag.p99]);
+  L.lagHist = L.lagHist.filter(([t]) => t > now - 60000);
+  drawSpine();
+}
+function drawSpine() {
+  const c = document.getElementById("spine"), g = c.getContext("2d"), W = c.width, H = c.height, now = Date.now();
+  g.clearRect(0, 0, W, H);
+  const lo = Math.log10(0.05), hi = Math.log10(30000);
+  const y = (v) => H - 20 - (Math.log10(Math.max(v, 0.05)) - lo) / (hi - lo) * (H - 40);
+  g.font = `22px ${css("--font")}`; g.fillStyle = css("--ink-2"); g.strokeStyle = css("--rule"); g.lineWidth = 1;
+  for (const [v, lab] of [[0.1, "0.1 ms"], [1, "1 ms"], [10, "10 ms"], [100, "100 ms"], [1000, "1 s"], [10000, "10 s"]]) {
+    const yy = Math.round(y(v)) + 0.5; g.beginPath(); g.moveTo(0, yy); g.lineTo(W, yy); g.stroke(); g.fillText(lab, 4, yy - 6);
+  }
+  for (const id of ["kdb", "duck"]) {
+    const L = LANES[id]; if (!L.lagHist.length) continue;
+    g.strokeStyle = css(L.color); g.lineWidth = 5; g.beginPath();
+    L.lagHist.forEach(([t, v], i) => { const x = W - (now - t) / 60000 * W; i ? g.lineTo(x, y(v)) : g.moveTo(x, y(v)); });
+    g.stroke();
+  }
+  const k = LANES.kdb.stats, d = LANES.duck.stats, v = document.getElementById("verdict");
+  if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
+    const r = d.lag.p99 / k.lag.p99;
+    v.innerHTML = "";
+    v.append(r >= 1 ? `kdb+ is ${r.toFixed(r < 10 ? 1 : 0)}× fresher` : `DuckDB is ${(1 / r).toFixed(1)}× fresher`);
+    const small = document.createElement("small");
+    small.textContent = `99th percentile lag: kdb+ ${ms(k.lag.p99)}, DuckDB ${ms(d.lag.p99)}`;
+    v.append(small);
+  }
+}
+
+/* ---- what each lane found, scored against the planted schedule ---- */
+function addReports(id, a) {
+  const L = LANES[id], t = a.newest;
+  if (L.since == null) L.since = t;              // only score what this page watched being analysed
+  for (const s of a.signatures || []) L.reports.push({ uav: s.uav, f: s.sig, t: s.at, at: t });
+  for (const s of a.anomalies || []) L.reports.push({ uav: s.uav, f: "jam", t, at: t });
+  for (const g of a.swarms || []) for (const u of g) L.reports.push({ uav: u, f: "swarm", t, at: t });
+  for (const r of a.rotor || []) if (r.laden) L.reports.push({ uav: r.uav, f: "laden", t, at: t });
+  L.reports = L.reports.filter((r) => r.at > t - 70000);
+}
+const NEED = { swarm: 4000, laden: 2560 };      // window the feature needs inside the event
+function scoreLane(id) {
+  const L = LANES[id], a = L.ana;
+  if (!a) return null;
+  const now = a.newest, out = {};
+  for (const [f] of FEATURES) out[f] = { found: 0, planted: 0, fa: 0 };
+  const ev = st.planted.filter((e) => e.end < now - 2000 && e.start > Math.max(now - 60000, L.since) && e.end - e.start >= (NEED[e.kind] || 0));
+  const hit = (e, r) => r.uav === e.uav && r.f === e.kind && r.t >= e.start - 1000 && r.t <= e.end + 4500;
+  for (const e of ev) {
+    if (!out[e.kind]) continue;
+    out[e.kind].planted++;
+    if (L.reports.some((r) => hit(e, r))) out[e.kind].found++;
+  }
+  // a report counts as true while its window can still hold the event: up to the window length after it ends
+  const active = (r, kinds) => st.planted.some((e) => e.uav === r.uav && kinds.includes(e.kind) && r.t >= e.start - 1500 && r.t <= e.end + 4500);
+  const seen = new Set();
+  for (const r of L.reports) {
+    if (r.at < now - 60000 || r.at > now - 2000) continue;
+    const key = `${r.uav}:${r.f}:${Math.round(r.t / 4000)}`;
+    if (seen.has(key)) continue; seen.add(key);
+    const ok = r.f === "jam" ? active(r, ["jam", "dive", "payload", "hover", "jink"]) : active(r, [r.f]);
+    if (!ok && out[r.f]) out[r.f].fa++;
+  }
+  return out;
+}
+function renderScore(id) {
+  const L = LANES[id], sc = scoreLane(id), body = L.el.querySelector("table.score tbody");
+  if (!sc) return;
+  const t = L.ana.took, per = { dive: t.signatures, payload: t.signatures, hover: t.signatures, jink: t.signatures,
+    jam: t.anomaly, swarm: t.swarm, laden: t.rotor };
+  const maxT = Math.max(1, ...Object.values(LANES).filter((x) => x.ana).flatMap((x) => Object.values(x.ana.took)));
+  body.innerHTML = "";
+  for (const [f, label] of FEATURES) {
+    const s = sc[f], tr = document.createElement("tr");
+    const cells = [label, s.planted ? `${s.found}` : "-", `${s.planted}`, `${s.fa}`];
+    for (const c of cells) { const td = document.createElement("td"); td.textContent = c; tr.append(td); }
+    const td = document.createElement("td");
+    td.textContent = `${per[f]} ms`;
+    const bar = document.createElement("i"); bar.className = "bar"; bar.style.width = `${Math.max(1, per[f] / maxT * 60)}px`;
+    td.append(bar); tr.append(td);
+    if (f === "jam") tr.title = "Anomalies count as false alarms only when nothing was planted on that drone at the time";
+    body.append(tr);
+  }
+}
+
+/* ---- the drone grid ---- */
+function renderGrid(id) {
+  const L = LANES[id], a = L.ana, c = L.el.querySelector("canvas.grid"), g = c.getContext("2d");
+  const W = Math.min(st.fleet, 1024), cols = 32, cell = c.width / cols;
+  g.fillStyle = css("--paper"); g.fillRect(0, 0, c.width, c.height);
+  const clsCol = { A: css("--cls-a"), B: css("--cls-b"), C: css("--cls-c") };
+  const state = new Map();
+  if (a) {
+    for (const r of a.rotor || []) state.set(r.uav, { cls: r.cls });
+    const mark = (u, k) => { const s = state.get(u) || {}; s[k] = true; state.set(u, s); };
+    for (const s of a.signatures || []) mark(s.uav, "sig");
+    for (const s of a.anomalies || []) mark(s.uav, "anom");
+    for (const gr of a.swarms || []) for (const u of gr) mark(u, "swarm");
+  }
+  for (let u = 1; u <= W; u++) {
+    const i = u - 1, x = (i % cols) * cell, y = Math.floor(i / cols) * cell, s = state.get(u) || {};
+    g.fillStyle = s.anom ? css("--alert") : s.sig ? css(L.color) : s.swarm ? css("--ink") : (clsCol[s.cls] || clsCol[st.classes[i]] || css("--paper-2"));
+    g.fillRect(x + 0.5, y + 0.5, cell - 1, cell - 1);
+  }
+  if (document.getElementById("showPlanted").checked && a) {
+    const now = a.newest;
+    g.strokeStyle = css("--ink"); g.lineWidth = 1.5;
+    for (const e of st.planted) {
+      if (e.kind === "laden" || e.uav > W || !(e.start <= now && e.end >= now - 1000)) continue;
+      const i = e.uav - 1, x = (i % cols) * cell, y = Math.floor(i / cols) * cell;
+      g.strokeRect(x + 1.25, y + 1.25, cell - 2.5, cell - 2.5);
+    }
+  }
+}
+
+/* ---- controls ---- */
+const fleetEl = document.getElementById("fleet");
+FLEET.forEach((n, k) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = n >= 1024 ? `${n / 1024}K` : `${n}`;
+  b.title = `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows per second (key ${k + 1})`;
+  b.setAttribute("aria-pressed", String(n === st.fleet));
+  b.onclick = () => setFleet(n);
+  fleetEl.append(b);
+});
+function setFleet(n) {
+  st.fleet = n;
+  for (const b of fleetEl.children) b.setAttribute("aria-pressed", String(b.title.startsWith(fmt.format(n) + " ")));
+  sendBoth({ cmd: "fleet", n, hz: HZ });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input, select, textarea")) return;
+  const k = Number(e.key); if (k >= 1 && k <= FLEET.length) setFleet(FLEET[k - 1]);
+});
+for (const b of document.querySelectorAll(".seg button")) b.onclick = () => {
+  st.mode = b.dataset.mode;
+  for (const x of document.querySelectorAll(".seg button")) x.setAttribute("aria-pressed", String(x === b));
+  sendBoth({ cmd: "mode", mode: st.mode });
+};
+document.getElementById("showPlanted").onchange = () => { renderGrid("kdb"); renderGrid("duck"); };
+function armed(btn, label, armedLabel, act) {
+  let timer = null;
+  btn.onclick = () => {
+    if (!btn.classList.contains("armed")) {
+      btn.classList.add("armed"); btn.textContent = armedLabel;
+      timer = setTimeout(() => { btn.classList.remove("armed"); btn.textContent = label; }, 3000);
+      return;
+    }
+    clearTimeout(timer); btn.classList.remove("armed"); btn.textContent = label; act();
+  };
+}
+armed(document.getElementById("clearBtn"), "Clear both lanes", "Click again to clear", () => {
+  sendBoth({ cmd: "clear" }); for (const L of Object.values(LANES)) { L.reports = []; L.lagHist = []; L.since = null; }
+});
+armed(document.getElementById("stopBtn"), "Shut down", "Click again to shut down", () => sendBoth({ cmd: "shutdown" }));
+
+connect("kdb"); connect("duck");
+setInterval(() => { drawSpine(); for (const id of Object.keys(LANES)) renderStats(id); }, 1000);
+</script>
+</body>
+</html>

@@ -22,7 +22,7 @@ out:`rows`hz`kdb!(
     w`uav; w`n;
     `dist`idx!value[sigTable[`tss;w;f]] 0 1;
     `dist`idx!value[sigTable[`dtw;w;f]] 0 1;
-    discord[m;] each down[;f] each w`imuz;
+    discord[m;] each downM[w`imuz;f];
     corr[w;f;`alt]; corr[w;f;`ias];
     swarms[w;f];
     rotor w))
