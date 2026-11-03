@@ -1,0 +1,848 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kairos Defense: fleet telemetry wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Martian+Mono:wdth,wght@75..112.5,400..600&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme:light;
+  --bg:#E3E8EF;--panel:#F2F5F9;--line:#C3CCD9;--text:#0D1828;--muted:#55657C;
+  --accent:#08837A;--amber:#A35F00;--chip:#0D1828;--chip-ink:#F2F5F9;--rim:#2A3850;
+  --screen:#02070F;
+  --sans:"Saira Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --mono:"Martian Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#07101C;--panel:#0C1727;--line:#1B2940;--text:#D9E5F5;--muted:#7C8FAB;
+    --accent:#5FF2E0;--amber:#FFB547;--chip:#D9E5F5;--chip-ink:#07101C;--rim:#22334D;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#07101C;--panel:#0C1727;--line:#1B2940;--text:#D9E5F5;--muted:#7C8FAB;
+  --accent:#5FF2E0;--amber:#FFB547;--chip:#D9E5F5;--chip-ink:#07101C;--rim:#22334D;
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.4;
+  display:grid;grid-template-rows:auto minmax(0,1fr);-webkit-font-smoothing:antialiased}
+
+.bar{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--line);min-width:0}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand b{font-weight:700;font-size:18px;letter-spacing:.01em;white-space:nowrap}
+.brand .sub{color:var(--muted);font-size:15px;white-space:nowrap}
+.brand svg{flex:none;color:var(--muted)}
+.link{font-size:12px;font-weight:600;border-radius:999px;padding:1px 9px;white-space:nowrap;color:var(--muted);border:1px solid var(--line)}
+.link.up{color:var(--accent);border-color:currentColor}
+.link.up::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:6px;vertical-align:1px}
+.tag{font-size:12px;font-weight:600;color:var(--amber);border:1px solid currentColor;border-radius:999px;padding:1px 9px;white-space:nowrap}
+.sys{margin-left:auto;display:flex;gap:16px;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums;min-width:0}
+.sys span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#gpu{max-width:30ch}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 384px;min-height:0}
+.screen{display:flex;flex-direction:column;gap:10px;padding:14px 16px 12px;min-height:0;min-width:0}
+.screen{container-type:inline-size}
+/* header row: drone count | live q tiles */
+.strip{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:10px 18px}
+.strip .lead{max-width:250px}
+.count{font-size:34px;font-weight:600;line-height:1;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.count .w{font-weight:400;color:var(--muted);font-size:22px;margin-left:6px;letter-spacing:0}
+.meta{color:var(--muted);font-size:14px;margin-top:5px}
+.note{color:var(--muted);font-size:13px;margin-top:3px}
+.note:empty{display:none}
+
+/* live q tiles in the header row: label, value, change; a faint 60 s sparkline sits behind the text */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0;min-width:0}
+.kpis[hidden]{display:none}
+.kpi{position:relative;overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:7px 12px 8px;min-width:0}
+.kpi dt,.kpi .v,.kpi .d{position:relative;z-index:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi dt{font-size:12.5px;color:var(--muted)}
+.kpi dd{margin:0}
+.kpi .v{font-size:24px;font-weight:600;line-height:1.15;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.kpi .d b{color:var(--text);font-weight:600}
+.kpi .d.behind,.kpi .d.behind b{color:var(--amber)}
+.kpi .sp{position:absolute;right:14px;bottom:0;width:44%;height:64%;pointer-events:none}
+.kpi svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.kpi .a{fill:var(--accent);opacity:.10}
+.kpi .l{fill:none;stroke:var(--accent);stroke-width:1.75;opacity:.8;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.kpi .dot{position:absolute;right:-3.5px;width:7px;height:7px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 2px var(--panel);transform:translateY(-50%);display:none}
+/* not enough room beside the count: tiles drop to their own row, then stack */
+@container (max-width:820px){
+  .strip{grid-template-columns:minmax(0,1fr)}
+  .strip .lead{max-width:none}
+}
+@container (max-width:600px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:300px){.kpis{grid-template-columns:1fr}}
+.keep{display:flex;flex-direction:column;gap:5px}
+.keep .foot{margin:0}
+/* Wall | Live table switch in the header; the table is the table page embedded in place of the wall */
+.seg.views{padding:2px}
+.seg.views button{font-size:13.5px;padding:6px 12px;min-width:0}
+.seg.views button[aria-selected="true"]{background:var(--chip);color:var(--chip-ink)}
+#tableView{flex:1;min-height:0;width:100%;border:0;background:var(--bg)}
+#tableView[hidden]{display:none}
+.screen.table-view .bezel,.screen.table-view .controls,.screen.table-view .hint{display:none}
+
+.bezel{position:relative;flex:1;min-height:0;background:var(--screen);border-radius:12px;overflow:hidden;
+  box-shadow:0 0 0 1px var(--rim),0 14px 40px -18px rgba(0,0,0,.55)}
+#wall{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+#labels{position:absolute;inset:0;pointer-events:none;transition:opacity .2s}
+.lb{position:absolute;color:#9FB4CF;font:400 10px/1 var(--mono);font-stretch:80%;opacity:.7;white-space:nowrap}
+.ln{position:absolute;display:flex;gap:10px;align-items:baseline;white-space:nowrap}
+.ln b{font-weight:600;font-size:14px;color:#E6F6FF}
+.ln span{font:400 13px/1 var(--mono);font-stretch:85%;color:#7FF5E6;font-variant-numeric:tabular-nums}
+.tagid{position:absolute;transform:translateX(-100%);color:#9FB4CF;font:400 12px/1 var(--mono);font-stretch:85%;white-space:nowrap}
+#tip{position:absolute;pointer-events:none;background:rgba(4,10,20,.93);border:1px solid #2B3D5A;border-radius:8px;
+  padding:8px 11px 9px;font-size:13px;color:#D9E5F5;min-width:178px}
+#tip h4{margin:0 0 4px;font:600 15px/1.2 var(--sans)}
+#tip .al{color:#FFB547;font-size:12.5px;font-weight:600;margin-bottom:3px}
+#tip .src{color:#7C8FAB;font-size:12px;margin-top:5px}
+#tip dl{display:grid;grid-template-columns:auto auto;gap:1px 14px;margin:0}
+#tip dt{color:#7C8FAB}
+#tip dd{margin:0;text-align:right;font:400 12px/1.6 var(--mono);font-stretch:85%;font-variant-numeric:tabular-nums}
+.nogl{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#D9E5F5}
+
+.controls{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;justify-content:space-between}
+.seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:3px;gap:2px}
+.seg button{font:600 16px/1 var(--sans);color:var(--muted);background:none;border:0;border-radius:7px;
+  padding:10px 14px;min-width:54px;cursor:pointer;font-variant-numeric:tabular-nums}
+.seg button:hover{color:var(--text)}
+.seg button[aria-checked="true"]{background:var(--chip);color:var(--chip-ink)}
+.seg.small button{font-size:14px;padding:8px 11px;min-width:0}
+.seg[aria-disabled="true"]{opacity:.45}
+button:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.opts{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.rate{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:14px}
+.rate select{font:600 14px var(--sans);color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 8px}
+.hint{margin:0;color:var(--muted);font-size:13px}
+
+.ingest{background:var(--panel);border-left:1px solid var(--line);padding:16px 18px 20px;overflow:auto;
+  display:flex;flex-direction:column;gap:18px;min-height:0}
+.ingest h2{margin:0;font-size:18px;font-weight:700}
+.big{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.num{font-size:56px;font-weight:600;line-height:.95;letter-spacing:-.02em;font-variant-numeric:tabular-nums;color:var(--accent)}
+.big.sm .num{font-size:38px;color:var(--text)}
+.ingest section{display:flex;flex-direction:column;gap:12px}
+.ingest section[hidden]{display:none}
+.ingest section+section{border-top:1px solid var(--line);padding-top:16px}
+.ingest section[hidden]+section{border-top:0;padding-top:0}
+.warn{margin:0;color:var(--amber);font-size:13.5px}
+.muted{margin:0;color:var(--muted);font-size:14px}
+.save{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.btn{font:600 14px var(--sans);background:var(--chip);color:var(--chip-ink);border:0;border-radius:8px;padding:9px 14px;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.danger{background:none;color:var(--amber);box-shadow:inset 0 0 0 1px currentColor}
+.btn.danger.armed{background:var(--amber);color:var(--chip-ink);box-shadow:none}
+button.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cmd{margin:0;background:var(--screen);color:#9FE9DF;border-radius:8px;padding:9px 12px;font:400 12px/1.5 var(--mono);font-stretch:85%;overflow-x:auto;white-space:pre}
+.big .u{color:var(--muted);font-size:15px}
+.formula{margin:6px 0 0;font-size:14px;color:var(--muted)}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px;margin:0}
+.stats div{border-top:1px solid var(--line);padding-top:6px}
+.stats .wide{grid-column:1/-1}
+.stats dt{font-size:12.5px;color:var(--muted)}
+.stats dd{margin:0;font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+
+.pipe{list-style:none;margin:0;padding:0 0 0 22px;position:relative;display:grid;gap:11px}
+.pipe::before{content:"";position:absolute;left:5px;top:8px;bottom:8px;width:2px;
+  background:repeating-linear-gradient(to bottom,var(--accent) 0 5px,transparent 5px 12px);
+  background-size:2px 12px;animation:flow var(--flow,1s) linear infinite;opacity:.85}
+@keyframes flow{to{background-position:0 12px}}
+.pipe li{position:relative;display:grid;grid-template-columns:1fr auto;gap:1px 10px}
+.pipe li::before{content:"";position:absolute;left:-21px;top:5px;width:12px;height:12px;border-radius:50%;
+  background:var(--panel);border:2px solid var(--accent)}
+.pipe b{grid-column:1;font-weight:600;font-size:15px}
+.pipe small{grid-column:1;color:var(--muted);font-size:13px}
+.pipe em{grid-row:1/span 2;grid-column:2;align-self:center;font-style:normal;font:400 12px/1.3 var(--mono);
+  font-stretch:85%;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
+
+.tap-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.tap h3{margin:0;font-size:15px;font-weight:600;white-space:nowrap}
+.tap-h span{font-size:12px;color:var(--muted);text-align:right}
+#tap{margin:7px 0 0;background:var(--screen);color:#9FE9DF;border-radius:8px;padding:10px 12px;
+  font:400 11px/1.55 var(--mono);font-stretch:78%;overflow-x:auto;white-space:pre;min-height:205px}
+#tap::first-line{color:#7C8FAB}
+details{border-top:1px solid var(--line);padding-top:12px}
+summary{cursor:pointer;font-weight:600;font-size:15px}
+.code{margin:10px 0 0;background:var(--screen);color:#CFE0F5;border-radius:8px;padding:12px;
+  font:400 11px/1.6 var(--mono);font-stretch:80%;overflow-x:auto;white-space:pre}
+.code .c{color:#6F86A6}
+.foot{margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+
+@media (max-width:900px){
+  html,body{height:auto}
+  body{display:block}
+  .layout{grid-template-columns:1fr}
+  .bezel{flex:none;height:58vh;min-height:320px}
+  .ingest{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #gpu,.brand .sub{display:none}
+  .count{font-size:28px}
+  .scale{width:100%;justify-content:space-between}
+  .seg button{padding:10px 8px;min-width:0;font-size:15px}
+}
+@media (prefers-reduced-motion:reduce){.pipe::before{animation:none}}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 10 L10 1.5 A8.5 8.5 0 0 1 17.36 5.75 Z" style="fill:var(--accent)"/></svg>
+    <b>Kairos Defense</b><span class="sub">Fleet telemetry wall</span>
+  </div>
+  <span class="tag">Synthetic data</span>
+  <span class="link" id="link">Looking for q</span>
+  <div class="seg views" id="views" role="tablist" aria-label="View">
+    <button type="button" role="tab" aria-selected="true" data-view="wall">Wall</button>
+    <button type="button" role="tab" aria-selected="false" data-view="table">Live table</button>
+  </div>
+  <div class="sys"><span id="fps">– fps</span><span>1 draw call per frame</span><span id="gpu"></span></div>
+</header>
+
+<main class="layout">
+  <section class="screen" aria-label="Telemetry wall">
+    <div class="strip">
+      <div class="lead">
+        <div class="count"><span id="count">1</span><span class="w" id="countWord">drone</span></div>
+        <div class="meta" id="meta"></div>
+        <div class="note" id="note"></div>
+      </div>
+      <dl class="kpis" id="kpis" aria-label="Live q recording" hidden>
+      <div class="kpi">
+        <dt>Rows recorded</dt>
+        <dd class="v" id="qTotal">0</dd>
+        <dd class="d" id="qTotalD">Measuring…</dd>
+        <dd class="sp" title="Rows recorded over the last 60 seconds"><svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" id="qTotalS"><path class="a"/><path class="l"/></svg><i class="dot"></i></dd>
+      </div>
+      <div class="kpi">
+        <dt title="Metrics recorded per second">Metrics recorded/s</dt>
+        <dd class="v" id="qMps">0</dd>
+        <dd class="d" id="qMpsD">Measuring…</dd>
+        <dd class="sp" title="Metrics recorded per second (drones × sample rate × columns) over the last 60 seconds"><svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" id="qMpsS"><path class="a"/><path class="l"/></svg><i class="dot"></i></dd>
+      </div>
+      <div class="kpi">
+        <dt>RDB memory in use</dt>
+        <dd class="v" id="qMem">0</dd>
+        <dd class="d" id="qMemD">Measuring…</dd>
+        <dd class="sp" title="RDB memory over the last 60 seconds"><svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" id="qMemS"><path class="a"/><path class="l"/></svg><i class="dot"></i></dd>
+      </div>
+        <div class="kpi">
+          <dt>Rows per second</dt>
+          <dd class="v" id="qRps">0</dd>
+          <dd class="d" id="qRpsD">Measuring…</dd>
+          <dd class="sp" title="Measured rows per second into the RDB over the last 60 seconds"><svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" id="qRpsS"><path class="a"/><path class="l"/></svg><i class="dot"></i></dd>
+        </div>
+      </dl>
+    </div>
+    <div class="bezel" id="bezel">
+      <canvas id="wall" aria-label="Live line charts, one per drone"></canvas>
+      <div id="labels"></div>
+      <div id="tip" hidden></div>
+    </div>
+    <iframe id="tableView" title="Live telem table" hidden></iframe>
+    <div class="controls">
+      <div class="seg scale" id="scale" role="radiogroup" aria-label="Drones on the wall"></div>
+      <div class="opts">
+        <div class="seg small" id="chan" role="radiogroup" aria-label="Channel"></div>
+        <label class="rate">Sample rate
+          <select id="rate"><option value="10">10 Hz</option><option value="50">50 Hz</option><option value="200" selected>200 Hz</option><option value="1000">1,000 Hz</option></select>
+        </label>
+      </div>
+    </div>
+    <p class="hint">Keys 1 to 7 switch fleet size. Point at a cell to read that drone.</p>
+  </section>
+
+  <aside class="ingest" aria-label="KDB-X recording and sizing">
+    <section id="qLive" hidden>
+      <h2>Recorded in q</h2>
+      <p class="formula" id="qDemand"></p>
+      <p class="warn" id="qWarn" hidden>The feed handlers are behind at this size. Start more shards to use more CPU cores.</p>
+      <dl class="stats">
+        <div><dt>Feed handlers</dt><dd id="qShards">1</dd></div>
+      </dl>
+      <div class="keep">
+        <label class="rate">Keep newest <select id="keep"></select> in memory</label>
+        <p class="foot" id="keepNote"></p>
+      </div>
+      <div class="save"><button class="btn" id="saveBtn" type="button">Save the RDB to disk</button><button class="btn danger" id="clearBtn" type="button">Clear the RDB</button><button class="btn danger" id="stopBtn" type="button" title="Stops the tickerplant, every feed handler and the RDB">Shut down q</button><span id="saveMsg"></span></div>
+    </section>
+    <section id="qOff">
+      <h2>Record it in q</h2>
+      <p class="muted" id="qOffText">Start the local kit and this panel shows what a q tickerplant and RDB are recording, live.</p>
+      <pre class="cmd">./start.sh</pre>
+    </section>
+    <section>
+      <h2>Production sizing</h2>
+      <div><div class="big sm"><span id="mps" class="num">200</span><span class="u">rows per second</span></div>
+      <p class="formula" id="formula"></p></div>
+      <dl class="stats">
+        <div><dt>Bandwidth</dt><dd id="bw"></dd></div>
+        <div><dt>Raw per day</dt><dd id="day"></dd></div>
+        <div><dt>Rows per day</dt><dd id="rpd"></dd></div>
+        <div><dt>Tickerplants</dt><dd id="tps"></dd></div>
+      </dl>
+      <ol class="pipe" id="pipe" aria-label="Tick pipeline">
+        <li><b>Fleet</b><small id="p0s"></small><em id="p0e"></em></li>
+        <li><b>Feed handlers</b><small>Batch every 10 ms, route by uav</small><em id="p1e"></em></li>
+        <li><b id="p2b">Tickerplant</b><small id="p2s"></small><em id="p2e"></em></li>
+        <li><b id="p3b">Real-time database</b><small>Today, in memory</small><em id="p3e"></em></li>
+        <li><b>Historical database</b><small>Date partitions, sorted by uav</small><em id="p4e"></em></li>
+      </ol>
+    </section>
+    <section class="tap">
+      <div class="tap-h"><h3 id="taph">Simulated tap</h3><span id="tapnote"></span></div>
+      <pre id="tap"></pre>
+    </section>
+    <details>
+      <summary>Query it from q</summary>
+<pre class="code"><span class="c">/ from any q session on this machine</span>
+h:hopen 5011
+h"count telem"
+h"select n:count i, avg alt, max imuz by uav from telem where uav<6"
+h"select from telem where uav=42i, stime>.z.p-0D00:00:01"
+
+<span class="c">/ empty the RDB and reset the rows-recorded count</span>
+h"clearRdb[]"
+
+<span class="c">/ write the RDB to hdb/&lt;date&gt;, then open it in a new session</span>
+h"saveHdb[]"
+<span class="c">/ $ q hdb</span>
+select count i by date from telem</pre>
+    </details>
+    <p class="foot">Synthetic data. The q feed handlers and the GPU run the same seeded function, so the traces, the q rows and the hover readout agree. Production sizing assumes 36-byte rows and about 2M rows per second per tickerplant shard with 10 ms batching, a planning figure to tune for your hardware.</p>
+  </aside>
+</main>
+
+<script>
+(() => {
+const Q_URL='ws://localhost:5011';
+const SCALES=[1,2,100,1000,10000,100000,1000000];
+const SCALE_LBL=['1','2','100','1K','10K','100K','1M'];
+const CH=[{n:'IMU-Z',u:'g'},{n:'Altitude',u:'m'},{n:'Airspeed',u:'m/s'},{n:'Motor',u:'rpm'}];
+const WIN=3, ALERT_P=0.006, ROW_BYTES=36, SHARD_RATE=2e6, WRAP=1024, WIPE_MS=600;
+const LANE_GAP=8;  // css px between the four channel cards; matches LANE_GAP in the shader
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const st={n:1,rate:200,ch:0};
+const $=id=>document.getElementById(id);
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+const pad7=id=>String(id+1).padStart(7,'0');
+
+/* ---- deterministic telemetry: identical in this file, the GPU shader and gen.q ---- */
+const rotl=(x,r)=>((x<<r)|(x>>>(32-r)))>>>0;
+const hu=x=>{x>>>=0;x=Math.imul(x,0x9E3779B1)>>>0;x=(x+rotl(x,15))>>>0;x=Math.imul(x,0x85EBCA77)>>>0;
+  x=(x+rotl(x,13))>>>0;x=Math.imul(x,0xC2B2AE3D)>>>0;x=(x+rotl(x,16))>>>0;return x;};
+const h01=x=>(hu(x)>>>8)/16777216;
+const h2=(a,b)=>hu((hu((a+0x165667B1)>>>0)+(Math.imul(b,0x27D4EB2F)>>>0))>>>0);
+const TAU=6.2831853;
+const fr=x=>x-Math.floor(x);
+const gs=(x,m,w)=>{const z=(x-m)/w;return Math.exp(-z*z);};
+const sw=(ts,f,ph)=>Math.sin(TAU*fr(ts*f+ph));
+const params=id=>[1,2,3,4,5,6,7,8].map(k=>h01(h2(id,k)));
+const alertAt=(id,tw)=>h01(h2((id+0x5bd1e995)>>>0,Math.floor(tw/8)>>>0))<ALERT_P;
+function sig(ch,ts,p,al){
+  if(ch===0){const ph=fr(ts*(0.9+0.9*p[0])+p[1]);
+    let v=0.10*gs(ph,.12,.025)-0.12*gs(ph,.21,.008)+0.95*gs(ph,.23,.009)-0.28*gs(ph,.255,.010)+0.22*gs(ph,.42,.05);
+    v+=0.05*sw(ts,23+7*p[2],0)+0.04*sw(ts,41+9*p[3],p[4])+0.03*sw(ts,0.3,p[2]);
+    if(al) v+=0.30*sw(ts,17+5*p[5],p[6])+0.20*sw(ts,7,0);
+    return v-0.08;}
+  if(ch===1) return 0.55*sw(ts,1/(18+14*p[0]),p[1])+0.20*sw(ts,0.13+0.1*p[2],p[3])+0.12*sw(ts,0.71+0.3*p[4],p[5])+0.05*sw(ts,3.1+p[6],p[7]);
+  if(ch===2) return 0.45*sw(ts,1/(6+6*p[2]),p[3])+0.22*sw(ts,0.37+0.2*p[5],p[6])+0.12*sw(ts,1.9+0.8*p[7],p[0])+0.06*sw(ts,7.3+2*p[1],p[4]);
+  return 0.35*sw(ts,0.6+0.5*p[1],0)+0.25*sw(ts,1.7+0.6*p[6],p[2])+0.18*sw(ts,9+4*p[3],0)+0.06*sw(ts,31+6*p[5],p[7]);
+}
+const val=(ch,id,p,tw)=>sig(ch,tw,p,ch===0&&alertAt(id,tw));
+const units=[v=>v*2.4,v=>120+38*v,v=>18+7*v,v=>7200+1500*v];
+const fmtV=[v=>v.toFixed(2),v=>v.toFixed(1),v=>v.toFixed(1),v=>fmt(v)];
+
+/* ---- shader ---- */
+const VS=`#version 300 es
+void main(){vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2));gl_Position=vec4(p*2.-1.,0.,1.);}`;
+const FS=`#version 300 es
+precision highp float;
+precision highp int;
+uniform vec2 uRes;
+uniform float uT,uRate,uWin,uDpr,uWipe,uAlertP;
+uniform int uCh,uHover;
+uniform vec4 uA,uB;
+uniform vec2 uCA,uCB;
+out vec4 o;
+const float TAU=6.2831853;
+const vec3 BG=vec3(.008,.02,.04),EMPTY=vec3(.016,.03,.055),GUT=vec3(.006,.014,.03),
+  PANEL=vec3(.02,.04,.072),GRID=vec3(.045,.085,.14),PHOS=vec3(.32,.95,.86),
+  ICE=vec3(.9,.98,1.),AMB=vec3(1.,.66,.22),RED=vec3(1.,.3,.24),
+  EDGE=vec3(.10,.17,.27),EDGE_HI=vec3(.21,.34,.50);
+const float LANE_GAP=8.;  // css px between the four channel cards; matches LANE_GAP in JS
+// signed distance to a rounded rectangle at the origin with size s, corner radius r (negative inside)
+float rrect(vec2 p,vec2 s,float r){vec2 d=abs(p-s*.5)-s*.5+vec2(r);return length(max(d,0.))+min(max(d.x,d.y),0.)-r;}
+uint rotl(uint x,uint r){return (x<<r)|(x>>(32u-r));}
+uint hu(uint x){x*=0x9E3779B1u;x+=rotl(x,15u);x*=0x85EBCA77u;x+=rotl(x,13u);x*=0xC2B2AE3Du;x+=rotl(x,16u);return x;}
+float h01(uint x){return float(hu(x)>>8u)/16777216.;}
+uint h2(uint a,uint b){return hu(hu(a+0x165667B1u)+b*0x27D4EB2Fu);}
+float gs(float x,float m,float w){float z=(x-m)/w;return exp(-z*z);}
+float sw(float ts,float f,float ph){return sin(TAU*fract(ts*f+ph));}
+bool alertAt(uint id,float tw){return h01(h2(id+0x5bd1e995u,uint(floor(tw/8.))))<uAlertP;}
+float sig(int ch,float ts,vec4 a,vec4 b,bool al){
+  if(ch==0){float ph=fract(ts*(.9+.9*a.x)+a.y);
+    float v=.10*gs(ph,.12,.025)-.12*gs(ph,.21,.008)+.95*gs(ph,.23,.009)-.28*gs(ph,.255,.010)+.22*gs(ph,.42,.05);
+    v+=.05*sw(ts,23.+7.*a.z,0.)+.04*sw(ts,41.+9.*a.w,b.x)+.03*sw(ts,.3,a.z);
+    if(al) v+=.30*sw(ts,17.+5.*b.y,b.z)+.20*sw(ts,7.,0.);
+    return v-.08;}
+  if(ch==1) return .55*sw(ts,1./(18.+14.*a.x),a.y)+.20*sw(ts,.13+.1*a.z,a.w)+.12*sw(ts,.71+.3*b.x,b.y)+.05*sw(ts,3.1+b.z,b.w);
+  if(ch==2) return .45*sw(ts,1./(6.+6.*a.z),a.w)+.22*sw(ts,.37+.2*b.y,b.z)+.12*sw(ts,1.9+.8*b.w,a.x)+.06*sw(ts,7.3+2.*a.y,b.x);
+  return .35*sw(ts,.6+.5*a.y,0.)+.25*sw(ts,1.7+.6*b.z,a.z)+.18*sw(ts,9.+4.*a.w,0.)+.06*sw(ts,31.+6.*b.y,b.w);
+}
+float val(int ch,uint id,vec4 a,vec4 b,float tw){return sig(ch,tw,a,b,ch==0&&alertAt(id,tw));}
+float qs(int ch,uint id,vec4 a,vec4 b,float ts){
+  float tw=mod(ts,1024.);
+  float k=floor(tw*uRate);
+  float s0=k/uRate,s1=mod((k+1.)/uRate,1024.);
+  return mix(val(ch,id,a,b,s0),val(ch,id,a,b,s1),tw*uRate-k);
+}
+vec3 ramp(float v){float t=clamp(v*.5+.5,0.,1.);
+  vec3 c=mix(vec3(.015,.05,.1),vec3(.03,.3,.38),smoothstep(0.,.55,t));
+  c=mix(c,PHOS,smoothstep(.5,.82,t));return mix(c,ICE,smoothstep(.85,1.,t));}
+vec3 shade(vec2 p,vec4 L,vec2 C){
+  float n=L.x,cols=L.y,rows=L.z,gap=L.w;
+  float col=floor(p.x/C.x),row=floor(p.y/C.y);
+  if(col>=cols||row>=rows||col<0.||row<0.) return BG;
+  float fid=row*cols+col;
+  if(fid>=n) return EMPTY;
+  uint id=uint(fid);
+  vec4 pa=vec4(h01(h2(id,1u)),h01(h2(id,2u)),h01(h2(id,3u)),h01(h2(id,4u)));
+  vec4 pb=vec4(h01(h2(id,5u)),h01(h2(id,6u)),h01(h2(id,7u)),h01(h2(id,8u)));
+  bool hov=int(fid)==uHover;
+  if(n>2.&&(C.x<6.||C.y<4.)){
+    vec3 c=ramp(val(uCh,id,pa,pb,uT));
+    if(alertAt(id,uT)) c=mix(AMB,RED,.5+.5*sin(uT*7.+pa.x*6.));
+    if(hov) c=ICE;
+    return c;
+  }
+  vec2 inn=C-vec2(gap);
+  vec2 q=p-vec2(col,row)*C-vec2(gap*.5);
+  if(q.x<0.||q.y<0.||q.x>=inn.x||q.y>=inn.y) return GUT;
+  int lanes=n<=2.?4:1;
+  float lg=lanes==4?LANE_GAP*uDpr:0.;
+  float lh=(inn.y-lg*float(lanes-1))/float(lanes);
+  int lane=min(int(floor(q.y/(lh+lg))),lanes-1);
+  float ly=q.y-float(lane)*(lh+lg);
+  if(ly>=lh) return GUT;
+  int ch=lanes==4?lane:uCh;
+  bool al=alertAt(id,uT);
+  vec3 c=PANEL+(al?AMB*.035:vec3(0.));
+  float fx=q.x/inn.x;
+  if(inn.x>140.&&lh>40.){
+    float tk=fract(fx*uWin*2.);float dpx=min(tk,1.-tk)*inn.x/(uWin*2.);
+    c+=GRID*.45*(1.-smoothstep(0.,uDpr,dpx));
+    c+=GRID*.6*(1.-smoothstep(0.,uDpr,abs(ly-lh*.5)));
+  }
+  float xs=fract(uT/uWin+h01(h2(id,9u)));
+  float age=fract(xs-fx);
+  if(age<.965){
+    float da=1./inn.x;
+    float tc=uT-age*uWin,tl=uT-(age+da)*uWin,tr=uT-max(age-da,0.)*uWin;
+    float A=.40;
+    float yc=lh*(.5-A*qs(ch,id,pa,pb,tc)),yl=lh*(.5-A*qs(ch,id,pa,pb,tl)),yr=lh*(.5-A*qs(ch,id,pa,pb,tr));
+    float m1=.5*(yl+yc),m2=.5*(yr+yc);
+    float lo=min(yc,min(m1,m2)),hi=max(yc,max(m1,m2));
+    float d=max(max(lo-ly,ly-hi),0.);
+    float lw=clamp(lh/60.,.55,1.3)*uDpr;
+    float core=1.-smoothstep(lw*.5,lw+.8,d);
+    float glow=lh>40.?exp(-d/(3.*uDpr))*.3:0.;
+    float fresh=pow(1.-age,1.8),head=exp(-age*45.);
+    vec3 tint=alertAt(id,mod(tc,1024.))?AMB:PHOS;
+    vec3 lc=mix(tint*(.16+.84*fresh),ICE,head*.85);
+    c+=lc*(core+glow*(.3+.7*fresh));
+  }
+  if(inn.x>=20.*uDpr&&lh>=12.*uDpr){
+    // card frame: rounded corners, 1 css px rim, lit from the top; amber while the drone is in alert
+    float rad=min((lanes==4?8.:5.)*uDpr,min(inn.x,lh)*.2);
+    float sd=rrect(vec2(q.x,ly),vec2(inn.x,lh),rad);
+    vec3 ec=mix(EDGE_HI,EDGE,clamp(ly/lh*1.8,0.,1.));
+    if(al) ec=mix(ec,AMB,.6);
+    if(hov) ec=ICE;
+    float bw=hov?1.5*uDpr:uDpr;
+    c=mix(c,ec,smoothstep(-bw-.6,-bw+.6,sd));
+    c=mix(c,GUT,smoothstep(-.5,.5,sd));
+  } else if(hov){float bd=min(min(q.x,ly),min(inn.x-q.x,lh-ly));c+=ICE*.7*(1.-smoothstep(0.,1.5*uDpr,bd));}
+  return c;
+}
+void main(){
+  vec2 p=vec2(gl_FragCoord.x,uRes.y-gl_FragCoord.y);
+  vec3 c;
+  if(uWipe<1.){float yb=uWipe*uRes.y;
+    c=p.y<yb?shade(p,uA,uCA):shade(p,uB,uCB);
+    float dy=abs(p.y-yb);
+    c+=ICE*.9*exp(-dy/(1.5*uDpr))+PHOS*.18*exp(-dy/(40.*uDpr));
+  } else c=shade(p,uA,uCA);
+  vec2 uv=gl_FragCoord.xy/uRes;
+  c*=.82+.18*smoothstep(0.,.35,min(min(uv.x,1.-uv.x),min(uv.y,1.-uv.y))*2.);
+  o=vec4(pow(c,vec3(.95)),1.);
+}`;
+
+const cv=$('wall'), bezel=$('bezel'), labelsEl=$('labels'), tip=$('tip');
+const gl=cv.getContext('webgl2',{antialias:false,alpha:false,powerPreference:'high-performance'});
+if(!gl){const d=document.createElement('div');d.className='nogl';
+  d.textContent='This wall needs WebGL2. Open it in a current Chrome, Edge, Safari or Firefox.';bezel.appendChild(d);return;}
+function sh(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,sh(gl.VERTEX_SHADER,VS));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,FS));gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(prog));
+gl.bindVertexArray(gl.createVertexArray());
+const U={};['uRes','uT','uRate','uWin','uDpr','uWipe','uAlertP','uCh','uHover','uA','uB','uCA','uCB'].forEach(k=>U[k]=gl.getUniformLocation(prog,k));
+
+let gpu='';
+try{const e=gl.getExtension('WEBGL_debug_renderer_info');gpu=e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER);}catch(_){}
+gpu=String(gpu||'').replace(/^ANGLE \((.*)\)$/,'$1').replace(/.*Renderer:\s*/,'').replace(/\s*Direct3D.*$/,'')
+  .replace(/,\s*Unspecified Version/,'').replace(/,\s*D3D\d+.*$/,'');
+if(gpu.includes(',')) gpu=gpu.replace(/^[^,]+,\s*/,'');
+$('gpu').textContent=gpu?`Rendered on ${gpu.trim()}`:'';
+
+/* ---- clock shared with q: Unix seconds, wrapped to 1024 s ---- */
+let clockOff=Date.now()-performance.now(), lastSync=0;
+function simT(now){if(now-lastSync>5000){lastSync=now;clockOff=Date.now()-performance.now();}
+  return ((now+clockOff)/1000)%WRAP;}
+
+/* ---- layout ---- */
+let W=1,H=1,dpr=1;
+function layout(n){
+  if(n===0) return {n:0,cols:1,rows:1,cw:W,ch:H,gap:0};
+  let cols,rows;
+  if(n<=2){cols=1;rows=n;}
+  else{const a=n<=100?1.9:n<=10000?1.8:n<=100000?1.6:1.0;
+    cols=Math.max(1,Math.round(Math.sqrt(n*(W/H)/a)));rows=Math.ceil(n/cols);}
+  const L={n,cols,rows,cw:W/cols,ch:H/rows,gap:0};
+  if(n<=2) L.gap=12*dpr;
+  else if(L.cw<6||L.ch<4) L.gap=0;
+  else if(L.cw>=60&&L.ch>=30) L.gap=4*dpr;
+  else if(L.cw>=16) L.gap=Math.max(1,dpr);
+  else L.gap=1;
+  return L;
+}
+const lineMode=L=>L.n<=2||(L.cw>=6&&L.ch>=4);
+let prevN=0, LA, LB, wipeT0=performance.now(), labelsReady=false;
+
+function resize(){
+  const r=cv.getBoundingClientRect();
+  let d=Math.min(window.devicePixelRatio||1,2);
+  let w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));
+  const cap=8.3e6; if(w*h>cap){const s=Math.sqrt(cap/(w*h));w=Math.round(w*s);h=Math.round(h*s);}
+  cv.width=w;cv.height=h;W=w;H=h;dpr=r.width>0?w/r.width:1;
+  LA=layout(st.n);LB=layout(prevN);buildLabels();updateText();
+}
+
+/* ---- overlay labels for small fleets ---- */
+let lblRefs=[];
+function buildLabels(){
+  labelsEl.innerHTML='';lblRefs=[];const L=LA;if(!L||L.n>100)return;
+  const s=1/dpr;
+  for(let id=0;id<L.n;id++){
+    const col=id%L.cols,row=Math.floor(id/L.cols);
+    const x=(col*L.cw+L.gap/2)*s,y=(row*L.ch+L.gap/2)*s,iw=(L.cw-L.gap)*s,ih=(L.ch-L.gap)*s;
+    if(L.n<=2){
+      const lh=(ih-3*LANE_GAP)/4;
+      for(let l=0;l<4;l++){const d=document.createElement('div');d.className='ln';
+        d.style.left=(x+12)+'px';d.style.top=(y+l*(lh+LANE_GAP)+9)+'px';
+        d.innerHTML=`<b>${CH[l].n}</b><span></span>`;labelsEl.appendChild(d);lblRefs.push({id,ch:l,el:d.lastChild});}
+      const t=document.createElement('div');t.className='tagid';t.style.left=(x+iw-12)+'px';t.style.top=(y+10)+'px';
+      t.textContent=`UAV-${pad7(id)}`;labelsEl.appendChild(t);
+    }else if(iw>=78&&ih>=24){
+      const d=document.createElement('div');d.className='lb';d.style.left=(x+7)+'px';d.style.top=(y+6)+'px';
+      d.textContent=`UAV-${pad7(id)}`;labelsEl.appendChild(d);
+    }
+  }
+}
+function updateLabels(t){
+  for(const r of lblRefs){const v=units[r.ch](val(r.ch,r.id,params(r.id),t));r.el.textContent=`${fmtV[r.ch](v)} ${CH[r.ch].u}`;}
+}
+
+/* ---- formatting ---- */
+function fmtSI(n){for(const [d,s] of [[1e12,'T'],[1e9,'B'],[1e6,'M'],[1e3,'K']]) if(n>=d){const v=n/d;
+  return (v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2))+s;} return String(Math.round(n));}
+function fmtBytes(b){for(const [d,s] of [[1e15,'PB'],[1e12,'TB'],[1e9,'GB'],[1e6,'MB'],[1e3,'KB']]) if(b>=d){const v=b/d;
+  return (v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2))+' '+s;} return Math.round(b)+' B';}
+function fmtWords(n){for(const [d,s] of [[1e12,'trillion'],[1e9,'billion'],[1e6,'million']]) if(n>=d){const v=n/d;
+  return (v>=100?v.toFixed(0):v>=10?v.toFixed(1):v.toFixed(2))+' '+s;} return fmt(n);}
+
+/* ---- link to q ---- */
+let ws=null, qUp=false, qStopped=false, qStats=null, qHover=null, fleetAt=0, lastHoverReq=0, lastHoverId=-1;
+const canLink=/^(file|http):$/.test(location.protocol);
+function setLink(state){
+  const el=$('link');el.classList.toggle('up',state==='up');
+  el.textContent=state==='up'?'Recording in q on :5011':state==='hosted'?'Hosted copy, not linked to q':'q not running on :5011';
+  $('qLive').hidden=state!=='up';$('qOff').hidden=state==='up';$('kpis').hidden=state!=='up';
+  if(state==='stopped') el.textContent='q shut down';
+  $('qOffText').textContent=state==='hosted'?'This hosted copy can’t reach your machine. Download the local kit and run it next to q to record this live.'
+    :state==='stopped'?'You shut q down from this page: the tickerplant, the feed handlers and the RDB have all stopped. To start again, run this in the kit folder; the page reconnects on its own.'
+    :'Start the local kit and this panel shows what a q tickerplant and RDB are recording, live.';
+  $('taph').textContent=state==='up'?'Last rows in the RDB':'Simulated tap';
+}
+function qSend(o){if(qUp&&ws&&ws.readyState===1) ws.send(JSON.stringify(o));}
+function sendFleet(){fleetAt=performance.now();qSend({cmd:'fleet',n:st.n,hz:st.rate});}
+function connectQ(){
+  if(!canLink){setLink('hosted');return;}
+  try{ws=new WebSocket(Q_URL);}catch(_){setTimeout(connectQ,3000);return;}
+  ws.onopen=()=>{qUp=true;qStopped=false;$('stopBtn').disabled=false;setLink('up');sendFleet();};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data);}catch(_){return;}
+    if(m.type==='stats'){qStats=m;renderQ();}
+    else if(m.type==='hover'){qHover=m;}
+    else if(m.type==='saved'){$('saveBtn').disabled=false;
+      $('saveMsg').textContent=`Saved ${fmt(m.rows)} rows to ${m.path} in ${fmt(m.ms)} ms`;}
+    else if(m.type==='cleared'){hist=[];$('clearBtn').disabled=false;
+      $('saveMsg').textContent=`Cleared ${fmt(m.rows)} rows in ${fmt(m.ms)} ms`;}
+    else if(m.type==='shutdown'){qStopped=true;}};
+  ws.onclose=()=>{qUp=false;ws=null;qStats=null;hist=[];disarmClear();disarmStop();$('clearBtn').disabled=false;$('saveMsg').textContent='';
+    setLink(qStopped?'stopped':'down');setTimeout(connectQ,3000);};
+  ws.onerror=()=>{};
+}
+$('saveBtn').onclick=()=>{if(!qUp)return;$('saveBtn').disabled=true;$('saveMsg').textContent='Saving…';qSend({cmd:'save'});};
+/* row limit: past it, q drops the oldest third of the table */
+const KEEP_OPTS=[1e6,1e7,6e7,1e8,2e8], keepEl=$('keep');
+const keepLabel=n=>`${n%1e6===0?n/1e6+'M':fmtSI(n)} rows (${fmtBytes(n*ROW_BYTES)})`;
+function buildKeep(){keepEl.innerHTML=KEEP_OPTS.map(n=>`<option value="${n}">${keepLabel(n)}</option>`).join('');}
+function syncKeep(q){
+  if(!KEEP_OPTS.includes(q.maxrows)){KEEP_OPTS.push(q.maxrows);KEEP_OPTS.sort((a,b)=>a-b);buildKeep();}
+  if(document.activeElement!==keepEl) keepEl.value=String(q.maxrows);
+  $('keepNote').textContent=`Holding ${fmtSI(q.held)} rows. Past the limit, q drops the oldest third.`;
+}
+buildKeep();
+keepEl.onchange=()=>qSend({cmd:'keep',n:+keepEl.value});
+
+/* shut down asks twice too; q tells every open page before it stops */
+let stopTimer=0;
+function disarmStop(){clearTimeout(stopTimer);const b=$('stopBtn');b.classList.remove('armed');b.textContent='Shut down q';}
+$('stopBtn').onclick=()=>{
+  if(!qUp)return;const b=$('stopBtn');
+  if(!b.classList.contains('armed')){
+    b.classList.add('armed');b.textContent='Click again to stop all q processes';
+    clearTimeout(stopTimer);stopTimer=setTimeout(disarmStop,4000);return;}
+  disarmStop();b.disabled=true;qStopped=true;$('saveMsg').textContent='Shutting down…';qSend({cmd:'shutdown'});
+};
+
+/* clear asks twice: the first click arms the button for 4 s, the second sends it */
+let clearTimer=0;
+function disarmClear(){clearTimeout(clearTimer);const b=$('clearBtn');b.classList.remove('armed');b.textContent='Clear the RDB';}
+$('clearBtn').onclick=()=>{
+  if(!qUp)return;const b=$('clearBtn');
+  if(!b.classList.contains('armed')){
+    b.classList.add('armed');b.textContent=`Click again to delete ${fmtSI(qStats?qStats.held:0)} rows`;
+    clearTimeout(clearTimer);clearTimer=setTimeout(disarmClear,4000);return;}
+  disarmClear();b.disabled=true;$('saveMsg').textContent='Clearing…';qSend({cmd:'clear'});
+};
+function renderQ(){
+  const q=qStats;if(!q)return;
+  $('qDemand').textContent=`Demand is ${fmtSI(q.demand)} rows per second: ${fmt(q.n)} drone${q.n>1?'s':''} × ${fmt(q.hz)} Hz`;
+  renderKpis(q);syncKeep(q);$('qShards').textContent=fmt(q.shards);
+  const settled=performance.now()-fleetAt>4000&&q.n===st.n&&q.hz===st.rate;
+  $('qWarn').hidden=!(settled&&q.demand>0&&q.rate<0.9*q.demand);
+  const tap=(q.tap||[]).slice(-10).map(r=>tapRow(r.time,r.uav,r.alt,r.ias,r.rpm,r.imuz));
+  $('tap').textContent=TAP_HEAD+'\n'+TAP_RULE+'\n'+tap.join('\n');
+  $('tapnote').textContent=`${fmt(q.held)} rows held`;
+}
+
+/* ---- live metrics above the wall: value, change over the last 5 s, 60 s sparkline ---- */
+const HIST_MS=60000, RATE_MS=5000;
+const fmtC=n=>n<1e7?fmt(n):fmtSI(n);  // exact digits until 10M, then 21.0M; the tooltip keeps the exact figure
+const KPIS=[
+  {k:'total',id:'qTotal',f:fmtC,exact:true,grow:v=>[fmtSI(v),'rows/s']},
+  // metrics per second = drones × sample rate × columns, as configured in q (steady, not the measured intake)
+  {k:'mps',id:'qMps',f:fmtC,exact:true,zero:true,
+   sub:q=>`${fmtSI(q.n)} × ${fmt(q.hz)} Hz × ${q.ncols} cols`,
+   tip:q=>`${fmt(q.n)} drone${q.n===1?'':'s'} × ${fmt(q.hz)} Hz × ${q.ncols} columns`},
+  {k:'mem',id:'qMem',f:fmtBytes,grow:v=>[fmtBytes(v)+'/s','']},
+  // rows per second = drones × sample rate as configured; the line under it, and the sparkline, are what q actually receives
+  {k:'rps',id:'qRps',f:fmtC,exact:true,zero:true,spark:'rate',
+   sub:q=>`Measured ${fmtSI(q.rate)}/s`,behind:q=>q.demand>0&&q.rate<0.9*q.demand},
+];
+let hist=[];
+function renderKpis(q){
+  const now=performance.now(), v={total:q.total,mps:q.n*q.hz*q.ncols,mem:q.mem,rps:q.n*q.hz,rate:q.rate};
+  if(hist.length&&v.total<hist[hist.length-1].total) hist=[];  // counters restarted (cleared from q, or RDB restarted)
+  hist.push({t:now,...v});
+  while(hist.length&&hist[0].t<now-HIST_MS) hist.shift();
+  const base=hist.find(h=>h.t>=now-RATE_MS), dt=(now-base.t)/1000;
+  for(const k of KPIS){
+    const el=$(k.id);el.textContent=k.f(v[k.k]);if(k.exact) el.title=fmt(v[k.k]);
+    const d=$(k.id+'D');
+    if(k.tip) d.title=k.tip(q);
+    if(k.sub){d.textContent=k.sub(q);d.classList.toggle('behind',!!(k.behind&&k.behind(q)));}
+    else if(dt<1) d.textContent='Measuring…';
+    else{const r=(v[k.k]-base[k.k])/dt;
+      if(Math.abs(r)<0.5) d.textContent='Steady';
+      else{const [num,u]=k.grow(Math.abs(r));d.innerHTML=`<b>${r>0?'+':'−'}${num}</b> ${u}`;}}
+    drawSpark(k.id+'S',k.spark||k.k,now,k.zero);
+  }
+}
+function drawSpark(id,key,now,zero){
+  const svg=$(id),line=svg.querySelector('.l'),area=svg.querySelector('.a'),dot=svg.parentNode.querySelector('.dot');
+  if(hist.length<2){line.removeAttribute('d');area.removeAttribute('d');dot.style.display='none';return;}
+  let lo=zero?0:Infinity,hi=-Infinity;for(const h of hist){lo=Math.min(lo,h[key]);hi=Math.max(hi,h[key]);}
+  const t0=now-HIST_MS, X=h=>((h.t-t0)/HIST_MS*100).toFixed(2), Y=v=>hi===lo?20:36-(v-lo)/(hi-lo)*32;
+  let d='';hist.forEach((h,i)=>{d+=(i?'L':'M')+X(h)+' '+Y(h[key]).toFixed(2);});
+  line.setAttribute('d',d);
+  // a steady value plotted from zero would fill the whole box, so zero-based tiles get the line only
+  if(zero) area.removeAttribute('d'); else area.setAttribute('d',`${d}L100 40L${X(hist[0])} 40Z`);
+  dot.style.display='block';dot.style.top=(Y(hist[hist.length-1][key])/40*100)+'%';
+}
+
+/* ---- controls ---- */
+const scaleEl=$('scale'), chanEl=$('chan');
+SCALES.forEach((n,i)=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+  b.textContent=SCALE_LBL[i];b.setAttribute('aria-label',`${fmt(n)} drone${n>1?'s':''}`);b.onclick=()=>setN(n);scaleEl.appendChild(b);});
+CH.forEach((c,i)=>{const b=document.createElement('button');b.type='button';b.setAttribute('role','radio');
+  b.textContent=c.n;b.onclick=()=>{if(st.n<=2)return;st.ch=i;syncButtons();updateText();};chanEl.appendChild(b);});
+$('rate').onchange=e=>{st.rate=+e.target.value;updateText();sendFleet();};
+function syncButtons(){
+  [...scaleEl.children].forEach((b,i)=>b.setAttribute('aria-checked',String(SCALES[i]===st.n)));
+  [...chanEl.children].forEach((b,i)=>b.setAttribute('aria-checked',String(st.n>2&&i===st.ch)));
+  chanEl.setAttribute('aria-disabled',String(st.n<=2));
+  chanEl.title=st.n<=2?'All four channels show at 1 and 2 drones':'';
+}
+function setN(n){
+  if(n===st.n)return;
+  prevN=st.n;st.n=n;LB=LA;LA=layout(n);wipeT0=performance.now();labelsReady=false;
+  labelsEl.style.opacity=0;buildLabels();qHover=null;syncButtons();updateText();sendFleet();
+}
+document.addEventListener('keydown',e=>{
+  if(e.target.closest&&e.target.closest('select,input,textarea'))return;
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  const k=parseInt(e.key,10);
+  if(k>=1&&k<=7){setN(SCALES[k-1]);return;}
+  const i=SCALES.indexOf(st.n);
+  if(e.key==='ArrowRight'&&i<SCALES.length-1){e.preventDefault();setN(SCALES[i+1]);}
+  if(e.key==='ArrowLeft'&&i>0){e.preventDefault();setN(SCALES[i-1]);}
+});
+
+/* ---- sizing panel ---- */
+function updateText(){
+  const n=st.n,mps=n*st.rate,shards=Math.max(1,Math.ceil(mps/SHARD_RATE)),bps=mps*ROW_BYTES;
+  $('countWord').textContent=n===1?'drone':'drones';
+  const L=LA;
+  $('meta').textContent=n<=2?`All four channels at ${st.rate} Hz, ${WIN} s sweep`
+    :lineMode(L)?`${CH[st.ch].n} at ${st.rate} Hz, ${WIN} s sweep per drone`
+    :`One cell per drone, colored by live ${CH[st.ch].n}`;
+  $('note').textContent=(L&&L.cw*L.ch<1)?`${fmt(n)} drones on ${fmt(W*H)} pixels, so the wall shows a sample`:'';
+  $('mps').textContent=fmtSI(mps);
+  $('formula').textContent=`${fmt(n)} drone${n>1?'s':''} × ${fmt(st.rate)} Hz, one ${ROW_BYTES}-byte row per frame`;
+  $('bw').textContent=fmtBytes(bps)+'/s';
+  $('day').textContent=fmtBytes(bps*86400);
+  $('rpd').textContent=fmtWords(mps*86400);
+  $('tps').textContent=shards===1?'1':`${fmt(shards)} shards`;
+  $('p0s').textContent=`${fmt(n)} drone${n>1?'s':''} at ${fmt(st.rate)} Hz`;
+  $('p0e').textContent=`${fmtSI(mps)}/s`;
+  $('p1e').textContent=`${fmtSI(mps)}/s`;
+  $('p2b').textContent=shards>1?'Tickerplants':'Tickerplant';
+  $('p2s').textContent=shards>1?`${fmt(shards)} shards, log and publish`:'Log and publish';
+  $('p2e').textContent=shards>1?`${fmtSI(mps/shards)}/s each`:`${fmtSI(mps)}/s`;
+  $('p3b').textContent=shards>1?'Real-time databases':'Real-time database';
+  $('p3e').textContent=shards>1?`${fmtSI(mps/shards)}/s each`:`${fmtSI(mps)}/s`;
+  $('p4e').textContent=`${fmtBytes(bps*86400)}/day`;
+  const flow=Math.max(.22,Math.min(1.6,1.6-0.16*Math.log10(Math.max(mps,1))));
+  $('pipe').style.setProperty('--flow',flow.toFixed(2)+'s');
+  if(!qUp) $('tapnote').textContent=`8 computed rows each second`;
+}
+
+/* ---- tap ---- */
+const TAP_HEAD='time                 uav      alt    ias    rpm    imuz';
+const TAP_RULE='-'.repeat(TAP_HEAD.length+2);
+const tapRow=(tm,uav,alt,ias,rpm,imu)=>`${tm} ${String(uav).padEnd(8)} ${(+alt).toFixed(1).padEnd(6)} ${(+ias).toFixed(1).padEnd(6)} ${String(Math.round(rpm)).padEnd(6)} ${(+imu).toFixed(2)}`;
+const tapLines=[];
+function tapPush(t){
+  const id=Math.floor(Math.random()*st.n),p=params(id);
+  const v=[0,1,2,3].map(c=>units[c](val(c,id,p,t)));
+  const ms=Date.now(),d=new Date(ms);
+  const ns=(ms%1000)*1e6+Math.floor(Math.random()*1e6);
+  const tm=`0D${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(ns).padStart(9,'0')}`;
+  tapLines.push(tapRow(tm,id+1,v[1],v[2],v[3],v[0]));if(tapLines.length>10)tapLines.shift();
+  $('tap').textContent=TAP_HEAD+'\n'+TAP_RULE+'\n'+tapLines.join('\n');
+}
+
+/* ---- hover ---- */
+let ptr=null;
+function setPtr(e){const r=cv.getBoundingClientRect();ptr={x:e.clientX-r.left,y:e.clientY-r.top,sx:W/r.width,sy:H/r.height,bw:r.width,bh:r.height};}
+cv.addEventListener('pointermove',setPtr);
+cv.addEventListener('pointerdown',setPtr);
+cv.addEventListener('pointerleave',()=>{ptr=null;tip.hidden=true;});
+function idAt(px,py,L){const col=Math.floor(px/L.cw),row=Math.floor(py/L.ch);
+  if(col<0||row<0||col>=L.cols||row>=L.rows)return -1;const id=row*L.cols+col;return id<L.n?id:-1;}
+let hoverId=-1;
+function updateTip(t,now){
+  if(!ptr||!LA){hoverId=-1;tip.hidden=true;return;}
+  hoverId=idAt(ptr.x*ptr.sx,ptr.y*ptr.sy,LA);
+  if(hoverId<0){tip.hidden=true;return;}
+  let v,src,al;
+  if(qUp){
+    if(hoverId!==lastHoverId||now-lastHoverReq>250){lastHoverReq=now;lastHoverId=hoverId;qSend({cmd:'hover',id:hoverId+1});}
+    const r=qHover&&qHover.id===hoverId+1?qHover.row:null;
+    if(r){v=[r.imuz,r.alt,r.ias,r.rpm];src=`Row from the q RDB, sampled ${String(r.stime).slice(11,23)} UTC`;}
+    else{v=null;src='Asking the q RDB…';}
+  }else{const p=params(hoverId);v=[0,1,2,3].map(c=>units[c](val(c,hoverId,p,t)));src='Computed in the browser';}
+  al=alertAt(hoverId,t);
+  const row=(k,x,u,f)=>`<dt>${k}</dt><dd>${v?f(x):'–'} ${u}</dd>`;
+  tip.innerHTML=`<h4>UAV-${pad7(hoverId)}</h4>${al?'<div class="al">Vibration alert</div>':''}<dl>`+
+    row('Altitude',v&&v[1],'m',x=>(+x).toFixed(1))+row('Airspeed',v&&v[2],'m/s',x=>(+x).toFixed(1))+
+    row('Motor',v&&v[3],'rpm',x=>fmt(x))+row('IMU-Z',v&&v[0],'g',x=>(+x).toFixed(2))+`</dl><div class="src">${src}</div>`;
+  tip.hidden=false;
+  const tw=tip.offsetWidth,th=tip.offsetHeight;
+  let x=ptr.x+16,y=ptr.y+16;
+  if(x+tw>ptr.bw-6)x=ptr.x-tw-16;if(y+th>ptr.bh-6)y=ptr.y-th-16;
+  tip.style.left=Math.max(6,x)+'px';tip.style.top=Math.max(6,y)+'px';
+}
+
+/* ---- Wall | Live table switch: the table page loads on first use and only polls q while it's showing ---- */
+const viewsEl=$('views'), tableView=$('tableView'), screenEl=document.querySelector('.screen');
+let view='wall';
+function setView(v){
+  view=v;
+  [...viewsEl.children].forEach(b=>b.setAttribute('aria-selected',String(b.dataset.view===v)));
+  screenEl.classList.toggle('table-view',v==='table');tableView.hidden=v!=='table';
+  if(v==='table'&&!tableView.getAttribute('src')) tableView.src='telemetry-table.html?embed=1';
+  else tableView.contentWindow&&tableView.contentWindow.postMessage({active:v==='table'},'*');
+  history.replaceState(null,'',v==='table'?'#table':location.pathname+location.search);
+}
+viewsEl.onclick=e=>{const b=e.target.closest('button');if(b&&b.dataset.view!==view)setView(b.dataset.view);};
+if(location.hash==='#table') setView('table');
+
+/* ---- loop ---- */
+let last=performance.now(),ft=16.7,tick100=0,tick250=0,tickTap=0;
+function frame(now){
+  if(view==='table'){last=now;requestAnimationFrame(frame);return;}  // no GPU work while the table is showing
+  const dt=Math.min(.1,(now-last)/1000);last=now;ft=ft*.92+dt*1000*.08;
+  const t=simT(now);
+  const w=reduce?1:Math.min(1,(now-wipeT0)/WIPE_MS),we=1-Math.pow(1-w,3);
+  gl.viewport(0,0,W,H);gl.useProgram(prog);
+  gl.uniform2f(U.uRes,W,H);gl.uniform1f(U.uT,t);gl.uniform1f(U.uRate,st.rate);gl.uniform1f(U.uWin,WIN);
+  gl.uniform1f(U.uDpr,dpr);gl.uniform1f(U.uWipe,w<1?we:2);gl.uniform1f(U.uAlertP,ALERT_P);
+  gl.uniform1i(U.uCh,st.ch);gl.uniform1i(U.uHover,hoverId);
+  gl.uniform4f(U.uA,LA.n,LA.cols,LA.rows,LA.gap);gl.uniform2f(U.uCA,LA.cw,LA.ch);
+  gl.uniform4f(U.uB,LB.n,LB.cols,LB.rows,LB.gap);gl.uniform2f(U.uCB,LB.cw,LB.ch);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+
+  $('count').textContent=fmt(w<1?prevN+(st.n-prevN)*we:st.n);
+  if(w>=1&&!labelsReady){labelsReady=true;labelsEl.style.opacity=1;}
+  if(now-tick100>100){tick100=now;updateLabels(t);updateTip(t,now);}
+  if(now-tick250>250){tick250=now;$('fps').textContent=`${Math.round(1000/ft)} fps, ${ft.toFixed(1)} ms`;}
+  if(!qUp&&now-tickTap>125){tickTap=now;tapPush(t);}
+  requestAnimationFrame(frame);
+}
+
+new ResizeObserver(resize).observe(cv);
+resize();syncButtons();updateText();setLink(canLink?'down':'hosted');connectQ();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

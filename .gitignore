@@ -1,0 +1,4 @@
+logs/
+hdb/
+telem_*.log
+.DS_Store
