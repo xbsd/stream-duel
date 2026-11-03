@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import Executor
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,11 @@ CFG = json.loads((ROOT / "config.json").read_text())
 TPL = json.loads((ROOT / "templates.json").read_text())
 SIGS = list(TPL)
 UNIX_MS_2000 = 946684800000.0
+ROWS_PER_CALL = 16  # drones per dtaidistance call (see dtw_profile)
+# Where DTW runs. The bridge sets a one-worker process pool (server.py): dtaidistance holds Python's
+# GIL while it computes, and DuckDB's inserts need the GIL, so DTW in the bridge's own process would
+# slow its ingest. None (tests, tools) computes in this process.
+EXECUTOR: Executor | None = None
 
 
 def to_ms(t: np.datetime64) -> float:
@@ -59,41 +65,89 @@ def zdist_profile(series: np.ndarray, q: np.ndarray) -> np.ndarray:
     return np.sqrt((d * d).sum(axis=-1))
 
 
-def dtw_best(series: np.ndarray, q: np.ndarray, window: float) -> tuple[float, int]:
-    """Best DTW match of q in series, as KDB-X's .ai.dtw.search defines it: every length-m window
-    and q are each z-normalized, then compared with a Sakoe-Chiba band of window x m (in
-    dtaidistance's terms window=round(window*m)+1). One call into dtaidistance's C library scores
-    every window."""
+def dtw_profile(series: np.ndarray, q: np.ndarray, window: float) -> np.ndarray:
+    """DTW distance between q and every length-m window of each series, as KDB-X's
+    .ai.dtw.search defines it: each window and q are z-normalized, then compared with a
+    Sakoe-Chiba band of window x m (in dtaidistance's terms window=round(window*m)+1).
+
+    series (rows, L) or (L,); q (m,). Returns (rows, L-m+1). Each call into dtaidistance's C
+    library scores every window of ROWS_PER_CALL rows, with q last so its OpenMP threads split
+    the windows between them (OMP_NUM_THREADS, set by start.sh to the kdb+ engine's thread count).
+    Blocks of 16 drones run faster than one call over every drone, and each call holds the GIL
+    for only about a millisecond.
+    """
     from dtaidistance import dtw
 
     qq = zn(np.asarray(q, dtype=np.float64))
     m = len(qq)
-    wins = zn(sliding_window_view(np.asarray(series, dtype=np.float64), m))
-    arr = np.ascontiguousarray(np.vstack([qq[None, :], wins]))
-    d = dtw.distance_matrix_fast(
-        arr, window=round(window * m) + 1, block=((0, 1), (1, len(arr))), compact=True
-    )
+    s = np.atleast_2d(np.asarray(series, dtype=np.float64))
+    wins = zn(sliding_window_view(s, m, axis=-1))  # (rows, k, m)
+    rows, k = wins.shape[:2]
+    out = np.empty((rows, k))
+    for r0 in range(0, rows, ROWS_PER_CALL):
+        part = wins[r0 : r0 + ROWS_PER_CALL]
+        arr = np.ascontiguousarray(np.vstack([part.reshape(-1, m), qq[None, :]]))
+        n = len(arr)
+        d = dtw.distance_matrix_fast(
+            arr,
+            window=round(window * m) + 1,
+            block=((0, n - 1), (n - 1, n)),
+            compact=True,
+            parallel=True,
+        )
+        out[r0 : r0 + len(part)] = np.asarray(d, dtype=np.float64).reshape(len(part), k)
+    return out if np.ndim(series) > 1 else out[0]
+
+
+def dtw_best(series: np.ndarray, q: np.ndarray, window: float) -> tuple[float, int]:
+    """Best DTW match of q in one series: (distance, window start)."""
+    d = dtw_profile(series, q, window)
     k = int(np.argmin(d))
     return float(d[k]), k
+
+
+def exit_with_parent(ppid: int) -> None:
+    """Initializer for the DTW worker process: exit as soon as the bridge that started it is gone,
+    however it ended."""
+    import os
+    import threading
+
+    def watch() -> None:
+        while os.getppid() == ppid:
+            time.sleep(0.5)
+        os._exit(0)
+
+    threading.Thread(target=watch, name="exit-with-parent", daemon=True).start()
+
+
+def _dtw_profiles(
+    D: dict[str, np.ndarray], jobs: list[tuple[str, list[float]]], window: float
+) -> list[np.ndarray]:
+    return [dtw_profile(D[c], np.asarray(tp, dtype=np.float64), window) for c, tp in jobs]
 
 
 def sig_table(mode: str, w: Window, f: int) -> dict:
     """Per signature, every drone's mean normalized distance over the signature's channels and the
     match start (downsampled samples): (nsig, drones) arrays, before thresholds."""
     D = {c: down(getattr(w, c), f) for c in ("alt", "ias", "imuz")}
+    jobs = [(c, tp) for s in SIGS for c, tp in TPL[s].items()]
+    if mode == "dtw":
+        args = (D, jobs, CFG["dtw_window"])
+        profs = (
+            _dtw_profiles(*args)
+            if EXECUTOR is None
+            else EXECUTOR.submit(_dtw_profiles, *args).result()
+        )
+    else:
+        profs = [zdist_profile(D[c], np.asarray(tp, dtype=np.float64)) for c, tp in jobs]
+    prof_of = iter(profs)
     dist, idx = [], []
     for s in SIGS:
         per_c = []
-        for c, tp in TPL[s].items():
-            tp = np.asarray(tp, dtype=np.float64)
-            if mode == "dtw":
-                r = [dtw_best(row, tp, CFG["dtw_window"]) for row in D[c]]
-                d = np.array([x[0] for x in r]) / np.sqrt(len(tp))
-                i = np.array([x[1] for x in r])
-            else:
-                prof = zdist_profile(D[c], tp)
-                i = prof.argmin(axis=1)
-                d = prof[np.arange(len(prof)), i] / np.sqrt(len(tp))
+        for tp in TPL[s].values():
+            prof = next(prof_of)
+            i = prof.argmin(axis=1)
+            d = prof[np.arange(len(prof)), i] / np.sqrt(len(tp))
             per_c.append((d, i))
         dist.append(np.mean([d for d, _ in per_c], axis=0))
         idx.append(per_c[0][1])

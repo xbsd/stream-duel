@@ -69,7 +69,7 @@ warping (DTW), which also matches a manoeuvre flown faster or slower.
 | | kdb+ lane | DuckDB lane |
 |---|---|---|
 | Shape search | `.ai.tss.tss` (KDB-X AI libraries) | NumPy (z-normalized distance profile) |
-| DTW | `.ai.dtw.search` (KDB-X) | dtaidistance (C) with KDB-X's definition |
+| DTW | `.ai.dtw.search` (KDB-X) | dtaidistance (C, OpenMP) with KDB-X's definition, in a worker process |
 | Anomaly | `.ai.tss.tssdist` | NumPy |
 | Swarm | q matrix multiply (`mmu`) | NumPy matrix multiply |
 | Rotor FFT | **KissFFT through the KX C interface** (`c/kx_fft.c`, loaded with `2:`) | `numpy.fft` |
@@ -88,9 +88,14 @@ checks every distance, score, correlation, group and frequency is identical.
 | 64K (13.1M) | 1.1 / 16.6 ms | 16.6 / 86.7 ms | yes |
 | 256K (52M) | | | no: the feed and the shared tickerplant saturate first and drop rows for both lanes |
 
-One analytics pass over 1,024 drones (819,200 samples): kdb+ about 95 ms, DuckDB about 210 ms.
-At 1,024 drones the planted events are found at the same rates by both lanes (dives, payloads,
-laden rotors all found; hover and jinking 95-96%; jamming 94%; hidden swarm 89%).
+One analytics pass over 1,024 drones (819,200 samples): kdb+ about 90 ms, DuckDB about 195 ms.
+With DTW shape search: kdb+ about 340 ms, DuckDB about 430 ms, and DuckDB's p99 lag rises to about
+3.5 ms while kdb+'s stays under 0.5 ms.
+
+At 1,024 drones both lanes find the planted events at the same rates: every dive, payload release,
+hidden swarm and laden rotor; 93-99% of hovers and jinks; about 90% of jamming bursts. False
+alarms per minute: 5-20 for dives and for payload releases, 0-5 for hovers and jinks, 20-80 for
+jamming, none for swarms and at most one for rotors.
 
 Keep 256K for showing the system's ceiling, not as an engine comparison: there both lanes lose
 rows because the shared pipeline can't produce or forward 52M rows a second on one laptop.
@@ -99,9 +104,16 @@ rows because the shared pipeline can't produce or forward 52M rows a second on o
 
 - Same rows, same tickerplant, same machine, same definitions; every number is measured live.
 - DuckDB has no streaming server, so the bridge is what a DuckDB deployment has to build; the page
-  says so. Its analytics run on their own thread, so they never block its ingest.
+  says so. Its analytics run on their own thread, so they don't hold up its ingest.
 - kdb+ runs its analytics in a separate real-time engine, as kdb+tick does, so they never block
-  the RDB's ingest either.
+  the RDB's ingest either. The DuckDB lane runs DTW in a worker process for the same reason:
+  dtaidistance holds Python's GIL while it computes, and DuckDB's inserts need the GIL (in the
+  bridge's own process DTW raised its p99 lag from 2 ms to 16 ms).
+- Both lanes' analytics get the same threads (`THREADS=8`): the kdb+ engine's secondary threads,
+  and dtaidistance's OpenMP threads.
+- Both lanes analyse once a second on a fixed schedule, and both end every drone's window at the
+  same instant (feed handler shards publish a few milliseconds apart; drones shifted by even one
+  sample against each other no longer correlate as a swarm).
 - If the DuckDB bridge falls behind it stops reading, and the tickerplant drops and counts rows for
   it instead of letting its queue grow; the page shows those drops.
 

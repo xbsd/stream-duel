@@ -45,6 +45,7 @@ def f(w):
 
 def test_same_window(w):
     assert w.uav.tolist() == KDB["uav"] and w.n == KDB["n"]
+    assert an.to_ms(w.newest) == KDB["newest"]  # both end every drone's window at one instant
 
 
 def test_tss_distances_and_positions_match(w, f):
@@ -56,6 +57,19 @@ def test_tss_distances_and_positions_match(w, f):
 def test_dtw_distances_match(w, f):
     st = an.sig_table("dtw", w, f)
     np.testing.assert_allclose(st["dist"], np.array(KDB["dtw"]["dist"]), rtol=1e-4, atol=1e-5)
+
+
+def test_dtw_in_worker_process_matches(w, f, monkeypatch):
+    """The live bridge runs DTW in a worker process (server.py); same numbers as in process."""
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
+
+    here = an.sig_table("dtw", w, f)
+    with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as ex:
+        monkeypatch.setattr(an, "EXECUTOR", ex)
+        there = an.sig_table("dtw", w, f)
+    np.testing.assert_array_equal(there["dist"], here["dist"])
+    np.testing.assert_array_equal(there["idx"], here["idx"])
 
 
 def test_discord_scores_match(w, f):

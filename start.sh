@@ -3,7 +3,8 @@
 # real-time engine) and the DuckDB lane (Python bridge), in the background.
 #   ./start.sh                 one feed handler per spare core: CPU cores minus 6, between 1 and 8
 #   SHARDS=4 ./start.sh        four feed handlers
-#   THREADS=8 ./start.sh       secondary threads for the kdb+ real-time engine (default 8)
+#   THREADS=8 ./start.sh       analytics threads for each lane: the kdb+ real-time engine's
+#                              secondary threads and the DuckDB lane's DTW threads (default 8)
 #   MAXROWS=100000000 ./start.sh   rows each lane keeps in memory
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -34,7 +35,7 @@ echo $! >> logs/pids
 sleep 1
 nohup "$Q" rte.q -p 5112 -tp 5110 -rdb 5111 -s "$THREADS" < /dev/null > logs/rte.log 2>&1 &
 echo $! >> logs/pids
-PYKX_UNLICENSED=true nohup uv run python -m bridge --port 5130 --tp 5110 --maxrows "$MAXROWS" < /dev/null > logs/bridge.log 2>&1 &
+OMP_NUM_THREADS="$THREADS" PYKX_UNLICENSED=true nohup uv run python -m bridge --port 5130 --tp 5110 --maxrows "$MAXROWS" < /dev/null > logs/bridge.log 2>&1 &
 echo $! >> logs/pids
 sleep 3
 echo "Running: tickerplant :5110, kdb+ lane (RDB :5111, real-time engine :5112), DuckDB lane (bridge :5130), $SHARDS feed handler(s) from :5120."

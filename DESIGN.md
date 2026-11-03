@@ -51,16 +51,21 @@ page's scoring uses it; neither lane's analytics does.
 
 ## The analytics (identical semantics in both lanes)
 
-Every second, each lane takes the newest **4 s** of every watched drone's samples it holds and runs:
+Every second, on a fixed schedule, each lane takes the newest **4 s** of every watched drone's
+samples it holds and runs the features below. Every drone's window ends at the same instant: the
+newest sample time all watched drones have reached (feed handler shards publish a few milliseconds
+apart, and drones shifted against each other by a sample would break a swarm's correlation).
 
 | Feature | Input | kdb+ lane | DuckDB lane | Output |
 |---|---|---|---|---|
-| **Signatures** | alt, ias, imuz, rpm, downsampled to 50 Hz | `.ai.tss.tss` (z-normalized) or `.ai.dtw.search`, per channel, built into KDB-X | NumPy MASS (z-normalized) or dtaidistance subsequence DTW | per drone, best signature and its distance (mean over the signature's channels) when below its threshold |
-| **Anomaly** | imuz at 50 Hz | `.ai.tss.anomalyi` (DAMP): discord score of the newest 0.5 s window | NumPy MASS: nearest-neighbour distance of the newest 0.5 s window to the rest | drones whose score is above the threshold |
-| **Swarm** | altitude first differences at 50 Hz | z-normalize, `mmu`: all pairwise correlations | z-normalize, `numpy` matrix product | groups of three or more drones with pairwise correlation above 0.9 (connected components) |
-| **Rotor** | rpm at full rate, newest 512 samples | **KissFFT via the KX C API** (`lib/kxfft.so`, `fftpeak`) | `numpy.fft.rfft` | dominant 5 to 40 Hz frequency per drone, its class, and laden (8% low) |
+| **Signatures** | alt, ias, imuz, downsampled to 50 Hz | `.ai.tss.tss` (z-normalized) or `.ai.dtw.search`, per channel, built into KDB-X, `peach` over drones | NumPy z-normalized distance profile, or dtaidistance DTW with KDB-X's definition (in a worker process, OpenMP threads) | per drone, best signature and its distance (mean over the signature's channels) when below its threshold |
+| **Anomaly** | imuz at 50 Hz | `.ai.tss.tssdist`: distance of the newest 0.5 s to its nearest match earlier in the window | NumPy, the same distance | drones whose score is above the threshold |
+| **Swarm** | altitude and airspeed first differences at 50 Hz | z-normalize, `mmu`: all pairwise correlations | z-normalize, NumPy matrix product | groups of three or more drones whose correlation on both channels is above 0.99 (connected components) |
+| **Rotor** | rpm at full rate, newest 512 samples | **KissFFT via the KX C API** (`lib/kxfft.so`, `fftpeak`) | `numpy.fft` | dominant 5 to 40 Hz frequency per drone, its class, and laden (8% low) |
 
-Thresholds live in `config.json`, shared by both lanes.
+Thresholds live in `config.json`, shared by both lanes. Each lane's analytics use the same number
+of threads (`THREADS`, default 8): the kdb+ engine's secondary threads (`-s`), and the DuckDB
+lane's OpenMP threads for DTW (NumPy's own threading elsewhere).
 
 Each lane reports after every pass:
 `{type:"analytics", lane, took:{signatures,anomaly,swarm,rotor} (ms), newest (stime of the newest
@@ -76,15 +81,15 @@ commits. Same machine, same clock.
 
 ## Scoring (on the page)
 
-The RDB also sends `{type:"planted", events:[[uav,type,start,end]...]}` for the last 60 s. A lane
-**found** a planted event when it reported that drone, with a matching feature, while the event
-was active or within 2 s after it. The page shows found / planted and false alarms for each lane
-and feature over the last 60 s.
+The real-time engine also sends, through the RDB, `{type:"planted", events:[[uav,type,start,end]...]}`
+for the last 60 s. A lane **found** a planted event when it reported that drone, with a matching
+feature, from 1 s before the event to 4.5 s after it ended (while a 4 s window can still hold it).
+The page shows found / planted and false alarms for each lane and feature over the last 60 s.
 
 ## Honesty rules
 
 - Both lanes get exactly the same rows, from the same tickerplant, on the same machine.
 - The page names every implementation choice: the DuckDB lane is a Python bridge (DuckDB has no
   streaming server), its analytics extract with SQL and compute in NumPy and dtaidistance; the kdb+
-  lane computes inside the RDB with KDB-X's AI libraries and a C library.
+  lane computes in a real-time engine next to the RDB with KDB-X's AI libraries and a C library.
 - Every number on the page is measured; nothing is scripted.

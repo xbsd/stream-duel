@@ -13,13 +13,16 @@ v:sigDuel[ts;P[;ix];(count ts)#0b;uav]
 tsAt:{[u] `timestamp$(`long$1e9*u)-UNIX}
 tbl:`stime xasc ([] stime:tsAt U0+ts; uav:`int$uav; alt:`real$120+38*v 1; ias:`real$18+7*v 2;
   rpm:`real$7200+1500*v 3; imuz:`real$2.4*v 0)
+/ as live, where feed handler shards publish at slightly different moments: some drones' newest
+/ samples have not arrived yet (2 behind for uav mod 8 = 3, 1 behind for uav mod 8 = 5)
+tbl:select from tbl where stime<=max[stime]-`timespan$(`long$1e9%HZ)*0 0 0 2 0 1 0 0 uav mod 8
 w:win[tbl;W;CFG`window_s;HZ]; f:HZ div CFG`ana_hz
 m:`long$CFG[`anomaly;`window_s]*CFG`ana_hz
 out:`rows`hz`kdb!(
   flip `stime`uav`alt`ias`rpm`imuz!(`long$tbl`stime;tbl`uav;`float$tbl`alt;`float$tbl`ias;`float$tbl`rpm;`float$tbl`imuz);
   HZ;
-  `uav`n`tss`dtw`discord`corr_alt`corr_ias`swarms`rotor!(
-    w`uav; w`n;
+  `uav`n`newest`tss`dtw`discord`corr_alt`corr_ias`swarms`rotor!(
+    w`uav; w`n; toMs w`newest;
     `dist`idx!value[sigTable[`tss;w;f]] 0 1;
     `dist`idx!value[sigTable[`dtw;w;f]] 0 1;
     discord[m;] each downM[w`imuz;f];

@@ -3,5 +3,6 @@
 cd "$(dirname "$0")"
 [ -f logs/pids ] && kill $(cat logs/pids) 2>/dev/null || true
 pkill -f "python -m bridge --port 5130" 2>/dev/null || true
+pkill -f "$PWD/.venv/bin/python -c from multiprocessing" 2>/dev/null || true  # the bridge's DTW worker
 rm -f logs/pids
 echo "Stopped."

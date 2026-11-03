@@ -17,11 +17,16 @@ down:{[x;f] avg each f cut x}                          / block means: hz -> ana_
 downM:{[M;f] flip avg each f cut flip M}               / the same for every row of a matrix, column-wise
 
 / win[tbl;W;secs;hz]: the newest secs seconds of drones 1..W from a telem-like table sampled at
-/ hz. Returns `uav`newest`hz`n`alt`ias`rpm`imuz! with one row per drone in each W' x n matrix.
+/ hz, ending for every drone at one instant: the newest sample time all of them have reached.
+/ Feed handler shards publish at slightly different moments; a window ending at each drone's own
+/ newest sample would shift drones of different shards against each other by a sample or two,
+/ which is enough to break a swarm's correlation. Samples share one time grid, so this aligns them.
+/ Returns `uav`newest`hz`n`alt`ias`rpm`imuz! with one row per drone in each W' x n matrix.
 win:{[tbl;W;secs;hz]
   t:select stime,uav,alt,ias,rpm,imuz from tbl where uav<=W;
   if[0=count t; :()];
-  newest:max t`stime; t:select from t where stime>newest-`timespan$`long$1e9*secs;
+  newest:min exec max stime by uav from t;
+  t:select from t where stime>newest-`timespan$`long$1e9*secs, stime<=newest;
   g:0!`uav xasc select stime,alt,ias,rpm,imuz by uav from t;
   o:iasc each g`stime;
   n:min count each o;

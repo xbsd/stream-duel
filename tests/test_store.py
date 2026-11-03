@@ -42,13 +42,24 @@ def test_window_is_newest_seconds_newest_last(store):
     assert w.newest == S0 + np.timedelta64(999 * 5_000_000, "ns")
 
 
-def test_window_trims_every_drone_to_the_shortest(store):
-    store.insert({c: v[:2] for c, v in batch(1000).items()})  # drones 1 and 2 get one more sample
+def test_window_ends_where_every_drone_has_data(store):
+    store.insert({c: v[:2] for c, v in batch(1000).items()})  # drones 1 and 2 are a sample ahead
     w = store.window(watch=4, secs=4, hz=200)
-    # the newest 4 s now start one sample later, so drones 3 and 4 hold 799 samples in it and every
-    # drone is trimmed to 799, each ending at its own newest sample (as analytics.q's win)
+    # as when one feed handler shard publishes before another: the window must not shift drones
+    # against each other, so every drone's ends at sample 999, the newest all four have
+    assert w is not None and w.n == 800 and w.alt.shape == (4, 800)
+    assert w.alt[:, -1].tolist() == [1000 + 999, 2000 + 999, 3000 + 999, 4000 + 999]
+    assert w.newest == S0 + np.timedelta64(999 * 5_000_000, "ns")
+
+
+def test_window_trims_every_drone_to_the_shortest():
+    st = Store(maxrows=10_000)
+    for k in range(1000):
+        b = batch(k)
+        st.insert({c: v[:3] for c, v in b.items()} if k == 500 else b)  # drone 4 misses one
+    w = st.window(watch=4, secs=4, hz=200)
     assert w is not None and w.n == 799 and w.alt.shape == (4, 799)
-    assert w.alt[:, -1].tolist() == [1000 + 1000, 2000 + 1000, 3000 + 999, 4000 + 999]
+    assert w.alt[:, -1].tolist() == [1000 + 999, 2000 + 999, 3000 + 999, 4000 + 999]
 
 
 def test_trim_keeps_the_newest_two_thirds():

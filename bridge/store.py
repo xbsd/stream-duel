@@ -168,13 +168,17 @@ class Store:
 
 def window_from_rows(r: dict[str, np.ndarray], secs: float, hz: int) -> Window | None:
     """Group rows (sorted by uav, stime) into per-drone matrices of the newest `secs`, trimmed to
-    the shortest drone's length (as analytics.q's win does)."""
+    the shortest drone's length (as analytics.q's win does).
+
+    Every drone's window ends at the newest sample time all drones have reached, so drones whose
+    feed handler shard published a little later are not shifted against the others."""
     uav = np.asarray(r["uav"])
     if len(uav) == 0:
         return None
     stime = np.asarray(r["stime"]).astype("datetime64[ns]")
-    newest = stime.max()
-    keep = stime > newest - np.timedelta64(int(secs * 1e9), "ns")
+    _, first, count = np.unique(uav, return_index=True, return_counts=True)
+    newest = stime[first + count - 1].min()  # rows are sorted by stime within each drone
+    keep = (stime > newest - np.timedelta64(int(secs * 1e9), "ns")) & (stime <= newest)
     uav, stime = uav[keep], stime[keep]
     cols = {c: np.asarray(r[c])[keep] for c in ("alt", "ias", "rpm", "imuz")}
     ids, starts, counts = np.unique(uav, return_index=True, return_counts=True)

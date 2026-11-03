@@ -6,7 +6,8 @@ page's websocket.
 DuckDB has no streaming server, so this bridge is the part a DuckDB deployment has to build:
 it subscribes to the tickerplant over kdb+ IPC (PyKX, unlicensed: no q runtime here), appends
 each batch to an in-memory DuckDB on an ingest thread, measures lag after the insert commits,
-runs the analytics every second on a worker thread, and serves stats and results to the page.
+runs the analytics every second on a worker thread (DTW in a worker process, which keeps
+dtaidistance off the GIL that DuckDB's inserts need), and serves stats and results to the page.
 When ingest falls behind it stops reading, so the tickerplant's queue limit drops rows for this
 lane and counts them (tp.q), instead of memory here growing without bound.
 """
@@ -17,11 +18,14 @@ import argparse
 import asyncio
 import json
 import logging
+import multiprocessing
 import os
 import queue
+import signal
 import sys
 import threading
 import time
+from concurrent.futures import ProcessPoolExecutor
 
 os.environ.setdefault("PYKX_UNLICENSED", "true")
 import numpy as np
@@ -135,8 +139,17 @@ class Lane:
 
 
 async def run(args: argparse.Namespace) -> None:
+    # DTW runs in a worker process (analytics.EXECUTOR); start it now so the first pass doesn't wait
+    an.EXECUTOR = ProcessPoolExecutor(
+        1,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=an.exit_with_parent,
+        initargs=(os.getpid(),),
+    )
+    an.EXECUTOR.submit(int).result()
     store = Store(args.maxrows)
     lane = Lane(store)
+    asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, lane.stop.set)  # stop.sh
     clients: set = set()
 
     async def send(msg: dict) -> None:
@@ -242,7 +255,10 @@ async def run(args: argparse.Namespace) -> None:
         await asyncio.sleep(0.2)
         server.close()
 
-    await asyncio.gather(feed(), stats_loop(), analytics_loop(), watch_stop())
+    try:
+        await asyncio.gather(feed(), stats_loop(), analytics_loop(), watch_stop())
+    finally:
+        an.EXECUTOR.shutdown(cancel_futures=True)
 
 
 def main(argv: list[str] | None = None) -> None:

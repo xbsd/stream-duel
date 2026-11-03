@@ -39,10 +39,13 @@ planted60:{
   `type`events`classes!(`planted;flip `uav`kind`start`end!(p`uav;p`kind;toMs p`start;toMs p`end);
     `A`B`C airClass 1+til W)}
 
+EVERY:`timespan$1000000*`long$CFG`every_ms
+/ passes on a fixed schedule (every_ms apart on average, as the DuckDB lane's), not every_ms after the
+/ timer tick that ran the last one, which would drift by up to a tick each pass
 .z.ts:{
   now:.z.p;
-  if[(null LASTA) or CFG[`every_ms]<=1e-6*`long$now-LASTA;
-    LASTA::now; prune[];
+  if[(null LASTA) or now>=LASTA+EVERY;
+    LASTA::$[(null LASTA) or now>LASTA+2*EVERY; now; LASTA+EVERY]; prune[];
     r:@[run;::;{`type`lane`error!(`analytics;`kdb;x)}];
     @[neg RDBH;(`relay;.j.j r);{}];
     @[neg RDBH;(`relayPlanted;.j.j @[planted60;::;{`type`error!(`planted;x)}]);{}]];
