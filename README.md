@@ -1,140 +1,136 @@
-# Drone telemetry wall, recorded in q
+# Stream Duel
 
-A local demo: q generates drone telemetry, a tickerplant stamps and publishes it, and an RDB records it. A browser page draws every drone on the GPU and shows what the RDB is holding, live.
+One drone telemetry feed, two engines, side by side: **kdb+ (KDB-X)** and **DuckDB** ingest exactly
+the same rows from the same tickerplant and run the same real-time pattern matching on them. A
+single page shows, live and measured, how fast each one ingests, how fresh its data is, and what
+each one finds in the drones. Built for an internal KX audience. All data is synthetic.
 
-## Quick start on a Mac
+![Stream Duel at 1,024 drones](docs/stream-duel.png)
 
-1. **Install q.** Install KDB-X (or kdb+) from kx.com. Check it works: open Terminal, type `q`, and you should get a `q)` prompt. Type `\\` to quit.
-2. **Unzip the kit.** Double-click `telemetry-kit.zip`. You get a `telemetry-kit` folder.
-3. **Start it.** In Terminal:
-   ```bash
-   cd ~/Downloads/telemetry-kit      # or wherever you unzipped it
-   chmod 755 start.sh stop.sh        # once, so the scripts can run
-   ./start.sh
-   ```
-4. **Open the page.**
-   ```bash
-   open telemetry-wall.html
-   ```
-   The green chip at the top says **Recording in q on :5011** once it's connected.
-5. **Try it.** Press keys **1** to **7** to change the fleet size (1 drone up to 1M). Click **Live table** at the top to watch rows arrive, and **Wall** to go back.
-6. **Stop it** when you're done: click **Shut down q** on the page (click twice to confirm), or run:
-   ```bash
-   ./stop.sh
-   ```
-   Either one stops the tickerplant, every feed handler and the RDB, which closes ports 5010, 5011 and 5020 upward.
+## Quick start (macOS or Linux)
 
-If something goes wrong:
+You need KDB-X (q on your PATH, or at `~/.kx/bin/q`), [uv](https://docs.astral.sh/uv/) and a C
+compiler. On macOS: `xcode-select --install` and `brew install libomp`.
 
-- **"Can't find 'q' on PATH"**: open a new Terminal window after installing q. If that doesn't help, point the kit at q directly, e.g. `Q=~/.kx/bin/q ./start.sh`.
-- **The chip says "q not running on :5011"**: check `logs/rdb.log`. Another program may be using ports 5010, 5011 or 5020 upward; stop it, then run `./stop.sh` and `./start.sh` again.
-- **The page is blank or has no graphs**: use a current Chrome or Safari.
+```bash
+./start.sh                 # builds lib/kxfft.so if needed, starts every process
+open stream-duel.html      # the page; give it a minute to collect 60 s of scores
+./stop.sh                  # or "Shut down" on the page (click twice)
+```
 
-## What runs where
+Keys 1 to 7 on the page set the fleet: 64, 256, 1K, 4K, 16K, 64K or 256K drones at 200 samples per
+second each (12.8K to 52M rows per second).
 
-| Process | Port | Job |
+## What you see
+
+- **Each lane** (kdb+ on the left, DuckDB on the right): rows ingested per second, lag (tickerplant
+  stamp to queryable, median and 99th percentile over 5 s), rows held, memory, rows the tickerplant
+  had to drop for it, the time one analytics pass takes, and how old the analysed data is.
+- **The spine** between them: both lanes' 99th-percentile lag over the last 60 s on one log scale,
+  and the live ratio ("kdb+ is 6.8× fresher").
+- **What each engine sees**: the 1,024 watched drones as a grid, colored by what that engine found
+  in its newest analysis: a signature, an anomaly, a hidden swarm, or the airframe class from the
+  rotor. Outlines mark the events the generator planted.
+- **Planted events found**: for each feature, events found out of those planted while the page
+  was watching, false alarms, and the time each pass took.
+- **Newest rows** in each engine.
+
+## What the pattern matching looks for
+
+The generator plants events on drones 1 to 1,024, deterministically, so each lane can be scored:
+
+| Feature | Planted as | Found by |
 |---|---|---|
-| `tp.q` | 5010 | Tickerplant. Stamps each batch, publishes to the RDB, and can log every row to disk. |
-| `fh.q` | 5020, 5021, … | Feed handlers. Each one owns a slice of the fleet and publishes every sample that's due, every 10 ms. |
-| `rdb.q` | 5011 | RDB. Records the `telem` table and serves the page over a websocket. |
-| `telemetry-wall.html` | | The page. It draws on the GPU, sends fleet size and sample rate to q, and shows q's numbers. |
-| `telemetry-table.html` | | Live table. The newest 25 to 100 rows of `telem`, newest first, up to 30 times a second, with rows and metrics per second. It only reads; it never changes the fleet. Open it from the wall's **Live table** button (or `telemetry-wall.html#table`), or on its own. |
+| Dive | altitude drops ~45 m and recovers in 3 s while speed rises | shape search on altitude and speed |
+| Payload release | rotor 8% slower while laden, then a jolt that rings down at 2.5 Hz | shape search on vertical acceleration |
+| Hover and stare | speed falls to ~1 m/s and holds | shape search on speed |
+| Evasive jinking | 3 Hz vertical oscillation | shape search on vertical acceleration |
+| Jamming | 2 s of broadband noise on every channel | anomaly: the newest half second has no close match earlier in the window |
+| Hidden swarm | groups of six fly one waveform for a 16 s slot | drones whose altitude and speed changes both correlate above 0.99 |
+| Airframe class, laden rotor | rotor at 11, 17 or 23 Hz, 8% lower when laden | dominant rotor frequency (FFT) |
 
-The data is synthetic, but it is generated and recorded in q. The page doesn't stream 20M samples a second into the browser. Instead, the GPU runs the same seeded function the feed handlers use (`gen.q`), bit for bit on the hash, so each trace is the series q recorded for that drone. Three things on the page come straight from the RDB, so you can check that they agree:
+Shape search is z-normalized subsequence search by default; the page switches to dynamic time
+warping (DTW), which also matches a manoeuvre flown faster or slower.
 
-- **The tiles above the wall and the "Recorded in q" panel**: rows recorded, rows and metrics per second (metrics = rows × columns), RDB memory, and the row limit (pick it from "Keep newest"; past it, the RDB drops the oldest third).
-- **The tap**: the last rows in `telem`.
-- **The hover readout**: the drone's latest row in the RDB.
+## How each lane works
 
-## Run it
-
-You need:
-
-- **q**: KDB-X or kdb+ 4.x, with `q` on your PATH and your own licence. Each q process here is single-threaded.
-- **A browser with WebGL2**: a current Chrome, Edge, Safari or Firefox.
-- **Free ports** 5010, 5011 and 5020 upward (one per feed handler).
-- **Python 3**, only if you serve the page over localhost (see below).
-
-macOS or Linux:
-
-```bash
-cd telemetry-kit
-./start.sh               # tickerplant, RDB, and one feed handler per spare CPU core
-open telemetry-wall.html # or double-click it
-./stop.sh                # when you're done
+```text
+   feed handlers (q, gen.q: telemetry + planted events)
+                 │
+            tickerplant tp.q  (stamps each batch; per-subscriber queue limit, drops counted)
+       ┌─────────┼──────────────────────────┐
+  rdb.q (kdb+)  rte.q (kdb+)            bridge/ (Python, DuckDB)
+  stores rows   real-time engine:       subscribes over kdb+ IPC (PyKX, no q runtime),
+  lag, stats    keeps the watched       appends to in-memory DuckDB, lag after commit,
+  websocket     drones' last seconds,   extracts the window with SQL, matches in
+                matches in q            NumPy and dtaidistance; websocket
 ```
 
-Windows: run `start.bat`, then open `telemetry-wall.html`. To stop, close the q windows.
+| | kdb+ lane | DuckDB lane |
+|---|---|---|
+| Shape search | `.ai.tss.tss` (KDB-X AI libraries) | NumPy (z-normalized distance profile) |
+| DTW | `.ai.dtw.search` (KDB-X) | dtaidistance (C) with KDB-X's definition |
+| Anomaly | `.ai.tss.tssdist` | NumPy |
+| Swarm | q matrix multiply (`mmu`) | NumPy matrix multiply |
+| Rotor FFT | **KissFFT through the KX C interface** (`c/kx_fft.c`, loaded with `2:`) | `numpy.fft` |
 
-When the page finds q, the chip at the top says **Recording in q on :5011**. From then on, the fleet toggle (keys 1–7) and the sample-rate menu drive the feed handlers. The **Wall | Live table** switch in the header shows the newest rows of `telem` as they arrive.
+Both lanes use the same definitions, templates (`templates.json`) and thresholds (`config.json`).
+`tests/test_crosscheck.py` runs the DuckDB lane's code on the rows the kdb+ lane analysed and
+checks every distance, score, correlation, group and frequency is identical.
 
-Some browsers built into other apps (terminal and editor panes, for example) won't open a page from a file. Serve the folder over localhost instead:
+## Measured on an Apple M4 Max (16 cores, 128 GB), 8 feed handlers
 
-```bash
-python3 -m http.server 8765
-# then open http://localhost:8765/telemetry-wall.html
-```
+| Fleet (rows/s) | kdb+ lag p50 / p99 | DuckDB lag p50 / p99 | Both keep up? |
+|---|---|---|---|
+| 1K drones (0.2M) | 0.1 / 0.5 ms | 1.2 / 2.3 ms | yes |
+| 4K (0.8M) | 0.1 / 0.8 ms | 1.5 / 2.7 ms | yes |
+| 16K (3.3M) | 0.4 / 3.9 ms | 2.4 / 8.6 ms | yes |
+| 64K (13.1M) | 1.1 / 16.6 ms | 16.6 / 86.7 ms | yes |
+| 256K (52M) | | | no: the feed and the shared tickerplant saturate first and drop rows for both lanes |
 
-Every open copy of the wall drives the same q: the last one to change the fleet size or sample rate wins. The live table only reads.
+One analytics pass over 1,024 drones (819,200 samples): kdb+ about 95 ms, DuckDB about 210 ms.
+At 1,024 drones the planted events are found at the same rates by both lanes (dives, payloads,
+laden rotors all found; hover and jinking 95-96%; jamming 94%; hidden swarm 89%).
 
-## Knobs
+Keep 256K for showing the system's ceiling, not as an engine comparison: there both lanes lose
+rows because the shared pipeline can't produce or forward 52M rows a second on one laptop.
 
-```bash
-SHARDS=6 ./start.sh            # feed handlers, one CPU core each (default: cores minus 4, between 1 and 12)
-LOG=1 ./start.sh               # tickerplant writes every row to telem_<date>.log
-MAXROWS=100000000 ./start.sh   # rows the RDB keeps in memory (default 60M, about 2 GB)
-Q=/path/to/q ./start.sh        # if q isn't on PATH
-```
+## Being fair
 
-Here's how memory and disk behave:
-
-- **The RDB keeps the newest MAXROWS rows.** When it passes that, it trims back to two thirds. The page's "Keep newest" menu changes the limit while q runs; a restart goes back to MAXROWS.
-- **"Rows recorded" counts everything.** That includes rows the RDB has since trimmed.
-- **LOG=1 puts every row on disk.** At 36 bytes a row, 2M rows a second is about 72 MB a second, so watch the disk.
-
-## What to expect on one desktop
-
-Generating the data costs more than ingesting it. Each feed handler is one q process doing about 20 sin/exp evaluations per row. Measured on an Apple M4 Max:
-
-| What | Rate |
-|---|---|
-| One feed handler generating rows, one core | about 4.9M rows a second (plan on about 4M once it also sends them) |
-| RDB inserting 10,000-row batches, one core | about 165M rows a second |
-| 6 feed handlers, 1 tickerplant, 1 RDB, end to end | kept up with 10M rows a second (1M drones at 10 Hz) |
-
-So you need about one feed handler per 4M rows a second. Past 10–20M rows a second, the single tickerplant and RDB become the limit, and more feed handlers stop helping. The "Rows per second" tile shows the configured rate with the measured rate under it; the measured line turns amber when q falls behind.
-
-The 20M rows a second case (100,000 drones at 200 Hz) needs several feed-handler cores. It also needs a lot of RAM: at that rate the RDB grows by about 0.7 GB a second. Production deployments shard the tickerplant and RDB the way the "Production sizing" panel shows.
-
-## Query it from q
-
-```q
-h:hopen 5011
-h"count telem"
-h"select n:count i, avg alt, max imuz by uav from telem where uav<6"
-h"select from telem where uav=42i, stime>.z.p-0D00:00:01"
-h"saveHdb[]"      / same as the page's Save button: writes hdb/<date>/telem, sorted and `p# on uav
-h"clearRdb[]"     / same as the page's Clear button: empties telem and resets the rows-recorded count
-neg[h]"shutdown[]" / same as the page's Shut down button: stops the feed handlers, tickerplant and RDB
-```
-
-Then open the HDB in a fresh session:
-
-```bash
-q hdb
-```
-```q
-select count i by date from telem
-select from telem where date=.z.D, uav=42i
-```
+- Same rows, same tickerplant, same machine, same definitions; every number is measured live.
+- DuckDB has no streaming server, so the bridge is what a DuckDB deployment has to build; the page
+  says so. Its analytics run on their own thread, so they never block its ingest.
+- kdb+ runs its analytics in a separate real-time engine, as kdb+tick does, so they never block
+  the RDB's ingest either.
+- If the DuckDB bridge falls behind it stops reading, and the tickerplant drops and counts rows for
+  it instead of letting its queue grow; the page shows those drops.
 
 ## Files
 
-- `schema.q`: the `telem` table (36-byte rows).
-- `gen.q`: the hash and the signal model, shared with the page's shader.
-- `tp.q`, `fh.q`, `rdb.q`: tickerplant, feed handler, RDB.
-- `telemetry-wall.html`: the wall, with the q tiles, the sizing panel and the Wall | Live table switch.
-- `telemetry-table.html`: the live table, on its own page or inside the wall.
-- `start.sh`, `stop.sh`, `start.bat`: launchers. Process output goes to `logs/`.
+| Path | What it is |
+|---|---|
+| `gen.q` | telemetry-kit's signal generator plus planted events, classes and groups; `planted[]` lists them |
+| `fh.q`, `tp.q` | feed handlers and the tickerplant (ports 5120+, 5110) |
+| `rdb.q`, `rte.q`, `analytics.q` | the kdb+ lane: storage and stats (5111), real-time engine (5112), the pattern matching |
+| `c/kx_fft.c`, `c/build.sh` | KissFFT exposed to q through the KX C API (`lib/kxfft.so`) |
+| `bridge/` | the DuckDB lane (5130): `store.py`, `analytics.py`, `server.py` |
+| `config.json`, `templates.json` | shared thresholds and signature templates |
+| `tools/templates.q`, `tools/calibrate.q`, `tools/fixture.q` | write templates, choose thresholds against planted truth, write the cross-check fixture |
+| `stream-duel.html` | the page |
+| `DESIGN.md` | the contract both lanes and the page follow |
 
-All the data is synthetic. The pages load two Google Fonts and fall back to system fonts offline; nothing else leaves your machine.
+## Tests
+
+```bash
+q tests/test_fft.q && q tests/test_gen.q   # the C FFT and the generator, against known answers
+uv run pytest                              # the cross-check and the DuckDB store
+q tools/calibrate.q -s 8                   # precision and recall of every feature against planted events
+```
+
+After changing `analytics.q`, `config.json` or `templates.json`, regenerate the cross-check fixture
+with `q tools/fixture.q -s 4`.
+
+## Credits
+
+Built on telemetry-kit (the q generator, tickerplant and RDB). KissFFT by Mark Borgerding (BSD-3,
+`c/vendor/kissfft`). `k.h` from KxSystems/kdb (Apache-2.0, `c/vendor`).
