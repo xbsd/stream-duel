@@ -21,3 +21,7 @@ no-binary-package = ["dtaidistance"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

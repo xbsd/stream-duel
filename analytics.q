@@ -61,11 +61,12 @@ anomalies:{[w;f]
   hit:where s>CFG[`anomaly;`threshold];
   flip `uav`score!(w[`uav] hit;s hit)}
 
-/ swarm: drones whose altitude changes move together (pairwise correlation over the window),
-/ grouped into connected components of min_size or more.
+/ swarm: drones whose altitude and airspeed changes both move together (pairwise correlation
+/ over the window, the lower of the two), grouped into connected components of min_size or more.
+/ Requiring both channels keeps chance correlations among a thousand drones from forming groups.
+corr:{[w;f;c] X:zn each 1_'deltas each down[;f] each w c; (X mmu flip X)%count first X}
 swarms:{[w;f]
-  X:zn each 1_'deltas each down[;f] each w`alt;
-  C:(X mmu flip X)%count first X;
+  C:corr[w;f;`alt]&corr[w;f;`ias];
   adj:C>CFG[`swarm;`min_r];
   lab:til count adj;
   while[not lab~l2:{min x where y}[lab] each adj; lab:l2];
