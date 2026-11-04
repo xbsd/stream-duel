@@ -45,24 +45,25 @@ def ns_of_day() -> int:
     return (time.time_ns() + time.localtime().tm_gmtoff * 10**9) % NS_DAY
 
 
-def columns(msg: object) -> dict[str, np.ndarray] | None:
-    """A tickerplant upd message ((`upd;`telem;columns) as NumPy) to named columns, else None."""
+def columns(msg: object) -> tuple[str, dict[str, np.ndarray]] | None:
+    """A tickerplant upd message ((`upd;`telem or `rotor;columns) as NumPy) to (table, named
+    columns), else None."""
     try:
         a = msg.np()
     except Exception:  # noqa: BLE001 - not a message we understand
         return None
-    if len(a) != 3 or str(a[0]) != "upd":
+    if len(a) != 3 or str(a[0]) != "upd" or str(a[1]) not in COLS:
         return None
-    cols = list(a[2])
-    if len(cols) != len(COLS):
+    table, cols = str(a[1]), list(a[2])
+    if len(cols) != len(COLS[table]):
         return None
-    out = dict(zip(COLS, cols, strict=True))
+    out = dict(zip(COLS[table], cols, strict=True))
     out["time"] = np.asarray(out["time"]).astype("timedelta64[ns]").astype(np.int64)
     out["stime"] = np.asarray(out["stime"]).astype("datetime64[ns]")
     out["uav"] = np.asarray(out["uav"], dtype=np.int32)
-    for c in ("alt", "ias", "rpm", "imuz"):
+    for c in COLS[table][3:]:
         out[c] = np.asarray(out[c], dtype=np.float32)
-    return out
+    return table, out
 
 
 class Lane:
@@ -70,13 +71,14 @@ class Lane:
 
     def __init__(self, store: Store) -> None:
         self.store = store
-        self.n, self.hz = 1024, 200
+        self.n = 1024
         self.mode = an.CFG.get("mode", "tss")
-        self.q: queue.Queue[dict[str, np.ndarray]] = queue.Queue()
+        self.q: queue.Queue[tuple[str, dict[str, np.ndarray]]] = queue.Queue()
         self.pending = 0
         self.lag: list[tuple[float, float, int]] = []  # (arrival s, lag ms, rows), last 5 s
         self.lag_lock = threading.Lock()
         self.rate, self.last_total, self.last_t = 0.0, 0, time.monotonic()
+        self.vrate, self.last_vtotal = 0.0, 0
         self.dropped = 0
         self.stop = threading.Event()
 
@@ -88,17 +90,22 @@ class Lane:
             except queue.Empty:
                 continue
             batch = [first]
-            while True:  # drain everything waiting into one insert
+            while True:  # drain everything waiting into one insert per table
                 try:
                     batch.append(self.q.get_nowait())
                 except queue.Empty:
                     break
-            merged = {c: np.concatenate([b[c] for b in batch]) for c in COLS}
-            n = self.store.insert(merged)
+            n = 0
+            for table, cols in COLS.items():
+                part = [b for t, b in batch if t == table]
+                if part:
+                    n += self.store.insert(
+                        table, {c: np.concatenate([b[c] for b in part]) for c in cols}
+                    )
             now = ns_of_day()
             with self.lag_lock:
                 t = time.monotonic()
-                for b in batch:
+                for _, b in batch:
                     self.lag.append((t, ((now - int(b["time"][0])) % NS_DAY) / 1e6, len(b["uav"])))
             self.pending -= n
             self.store.trim()
@@ -117,19 +124,22 @@ class Lane:
 
     def stats(self) -> dict:
         now = time.monotonic()
-        total = self.store.total
-        r = (total - self.last_total) / max(now - self.last_t, 1e-3)
-        self.rate, self.last_total, self.last_t = 0.6 * self.rate + 0.4 * r, total, now
+        total, vtotal, dt = self.store.total, self.store.vtotal, max(now - self.last_t, 1e-3)
+        self.rate = 0.6 * self.rate + 0.4 * (total - self.last_total) / dt
+        self.vrate = 0.6 * self.vrate + 0.4 * (vtotal - self.last_vtotal) / dt
+        self.last_total, self.last_vtotal, self.last_t = total, vtotal, now
         return {
             "type": "stats",
             "lane": "duckdb",
             "n": self.n,
-            "hz": self.hz,
             "mode": self.mode,
-            "demand": self.n * self.hz,
+            "demand": self.n * (an.CFG["ana_hz"] + an.CFG["rotor"]["hz"]),
             "rate": self.rate,
+            "vrate": self.vrate,
             "total": total,
+            "vtotal": vtotal,
             "held": self.store.held,
+            "tables": dict(self.store.counts),
             "mem": self.store.mem(),
             "lag": self.lag_stats(),
             "dropped": self.dropped,
@@ -168,8 +178,8 @@ async def run(args: argparse.Namespace) -> None:
                     continue
                 c = d.get("cmd")
                 if c == "fleet":
-                    lane.n, lane.hz = int(d["n"]), int(d["hz"])
-                    lane.rate = 0.0
+                    lane.n = int(d["n"])
+                    lane.rate = lane.vrate = 0.0
                 elif c == "mode" and d.get("mode") in ("tss", "dtw"):
                     lane.mode = d["mode"]
                     await send({"type": "mode", "lane": "duckdb", "mode": lane.mode})
@@ -187,18 +197,13 @@ async def run(args: argparse.Namespace) -> None:
                 elif c == "keep":
                     await asyncio.to_thread(store.set_keep, int(d["n"]))
                 elif c == "last":
-                    rows = await asyncio.to_thread(store.last_rows, int(d["n"]))
-                    await ws.send(
-                        json.dumps(
-                            {
-                                "type": "last",
-                                "lane": "duckdb",
-                                "total": store.total,
-                                "held": store.held,
-                                "rows": rows,
-                            }
-                        )
+                    n = int(d["n"])
+                    t, r = await asyncio.gather(
+                        asyncio.to_thread(store.last_rows, "telem", n),
+                        asyncio.to_thread(store.last_rows, "rotor", n),
                     )
+                    msg = {"type": "last", "lane": "duckdb", "total": store.total}
+                    await ws.send(json.dumps({**msg, "held": store.held, "telem": t, "rotor": r}))
                 elif c == "shutdown":
                     await send({"type": "shutdown", "lane": "duckdb"})
                     lane.stop.set()
@@ -223,10 +228,10 @@ async def run(args: argparse.Namespace) -> None:
             if got is None:
                 await asyncio.sleep(0.001)
                 continue
-            cols = columns(got)
-            if cols is not None:
-                lane.pending += len(cols["uav"])
-                lane.q.put(cols)
+            msg = columns(got)
+            if msg is not None:
+                lane.pending += len(msg[1]["uav"])
+                lane.q.put(msg)
             # yield after every batch: when the tickerplant always has data waiting, a loop that
             # only yields on an empty socket starves the stats, analytics and the page's socket
             await asyncio.sleep(0)
@@ -246,7 +251,7 @@ async def run(args: argparse.Namespace) -> None:
             t = time.monotonic()
             try:
                 r = await asyncio.to_thread(
-                    an.analyse, store, min(lane.n, an.CFG["watch"]), lane.mode, lane.hz
+                    an.analyse, store, min(lane.n, an.CFG["watch"]), lane.mode
                 )
             except Exception as e:  # noqa: BLE001 - report, keep serving
                 r = {"type": "analytics", "lane": "duckdb", "error": str(e)}

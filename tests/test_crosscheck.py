@@ -21,70 +21,70 @@ KDB = FIX["kdb"]
 UNIX_NS_2000 = 946684800 * 10**9
 
 
-@pytest.fixture(scope="module")
-def w():
-    r = FIX["rows"]
+def rows(table: str, metrics: tuple[str, ...]) -> dict[str, np.ndarray]:
+    """One table of the fixture as the SQL returns it: ORDER BY uav, stime."""
+    r = FIX[table]
     if isinstance(r, list):  # q's .j.j writes a table as a list of row objects
         r = {k: [row[k] for row in r] for k in r[0]}
-    rows = {
+    out = {
         "uav": np.array(r["uav"], dtype=np.int32),
         "stime": (np.array(r["stime"], dtype=np.int64) + UNIX_NS_2000).astype("datetime64[ns]"),
-        **{c: np.array(r[c], dtype=np.float32) for c in ("alt", "ias", "rpm", "imuz")},
+        **{c: np.array(r[c], dtype=np.float32) for c in metrics},
     }
-    order = np.lexsort((rows["stime"], rows["uav"]))  # the SQL's ORDER BY uav, stime
-    rows = {k: v[order] for k, v in rows.items()}
-    win = window_from_rows(rows, an.CFG["window_s"], FIX["hz"])
+    order = np.lexsort((out["stime"], out["uav"]))
+    return {k: v[order] for k, v in out.items()}
+
+
+@pytest.fixture(scope="module")
+def w():
+    t, r = rows("telem", ("alt", "ias", "imuz")), rows("rotor", ("rpm",))
+    win = window_from_rows(t, r, an.CFG["window_s"], int(an.CFG["rotor"]["n"]))
     assert win is not None
     return win
 
 
-@pytest.fixture(scope="module")
-def f(w):
-    return w.hz // an.CFG["ana_hz"]
-
-
 def test_same_window(w):
-    assert w.uav.tolist() == KDB["uav"] and w.n == KDB["n"]
+    assert w.uav.tolist() == KDB["uav"] and w.n == KDB["n"] and w.nr == KDB["nr"]
     assert an.to_ms(w.newest) == KDB["newest"]  # both end every drone's window at one instant
 
 
-def test_tss_distances_and_positions_match(w, f):
-    st = an.sig_table("tss", w, f)
+def test_tss_distances_and_positions_match(w):
+    st = an.sig_table("tss", w)
     np.testing.assert_allclose(st["dist"], np.array(KDB["tss"]["dist"]), rtol=1e-6, atol=1e-7)
     assert np.array_equal(st["idx"], np.array(KDB["tss"]["idx"]))
 
 
-def test_dtw_distances_match(w, f):
-    st = an.sig_table("dtw", w, f)
+def test_dtw_distances_match(w):
+    st = an.sig_table("dtw", w)
     np.testing.assert_allclose(st["dist"], np.array(KDB["dtw"]["dist"]), rtol=1e-4, atol=1e-5)
 
 
-def test_dtw_in_worker_process_matches(w, f, monkeypatch):
+def test_dtw_in_worker_process_matches(w, monkeypatch):
     """The live bridge runs DTW in a worker process (server.py); same numbers as in process."""
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor
 
-    here = an.sig_table("dtw", w, f)
+    here = an.sig_table("dtw", w)
     with ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) as ex:
         monkeypatch.setattr(an, "EXECUTOR", ex)
-        there = an.sig_table("dtw", w, f)
+        there = an.sig_table("dtw", w)
     np.testing.assert_array_equal(there["dist"], here["dist"])
     np.testing.assert_array_equal(there["idx"], here["idx"])
 
 
-def test_discord_scores_match(w, f):
+def test_discord_scores_match(w):
     m = round(an.CFG["anomaly"]["window_s"] * an.CFG["ana_hz"])
-    py = [an.discord(m, row) for row in an.down(w.imuz, f)]
+    py = [an.discord(m, row) for row in w.imuz]
     np.testing.assert_allclose(py, KDB["discord"], rtol=1e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize("c", ["alt", "ias"])
-def test_correlations_match(w, f, c):
-    np.testing.assert_allclose(an.corr(w, f, c), np.array(KDB[f"corr_{c}"]), atol=1e-9)
+def test_correlations_match(w, c):
+    np.testing.assert_allclose(an.corr(w, c), np.array(KDB[f"corr_{c}"]), atol=1e-9)
 
 
-def test_swarm_groups_match(w, f):
-    assert an.swarms(w, f) == KDB["swarms"]
+def test_swarm_groups_match(w):
+    assert an.swarms(w) == KDB["swarms"]
 
 
 def test_rotor_matches(w):

@@ -150,7 +150,7 @@ footer p { margin: 4px 0; max-width: 110ch; }
   <p class="how"></p>
   <div class="rate">0</div>
   <div class="rate-unit">rows ingested per second</div>
-  <div class="values" title="Each row carries 4 measured values: altitude, airspeed, rotor speed and vertical acceleration. With the drone id, sample time and tickerplant stamp, a row is 7 values, 36 bytes."><b>0</b> metric values per second, 4 per row</div>
+  <div class="values" title="Measured values stored per second: 3 in each telemetry row (altitude, airspeed, vertical acceleration, 50 a second per drone) and 1 in each rotor row (rotor speed, 100 a second per drone)"><b>0</b> metric values per second</div>
   <div class="figs">
     <div class="fig" data-f="p50"><b>-</b><span>lag, median</span></div>
     <div class="fig" data-f="p99"><b>-</b><span>lag, 99th pct</span></div>
@@ -178,7 +178,7 @@ footer p { margin: 4px 0; max-width: 110ch; }
   </section>
   <section class="block">
     <h2>Newest rows</h2>
-    <table class="tap"><thead><tr><th scope="col">Stamped</th><th scope="col">Drone</th><th scope="col">Alt m</th><th scope="col">Speed m/s</th><th scope="col">Rotor rpm</th><th scope="col">Vert. accel</th></tr></thead><tbody></tbody></table>
+    <table class="tap"><thead><tr><th scope="col">Stamped</th><th scope="col">Drone</th><th scope="col">Alt m</th><th scope="col">Speed m/s</th><th scope="col">Vert. accel</th><th scope="col">Rotor rpm</th></tr></thead><tbody></tbody></table>
   </section>
 </template>
 
@@ -191,8 +191,10 @@ const LANES = {
           how: "A Python bridge appends each batch to DuckDB, extracts the window with SQL, matches in NumPy." },
 };
 const FLEET = [64, 256, 1024, 4096, 16384, 65536, 262144];
-const HZ = 200;
-const METRICS = 4;                                 // measured values per row: alt, ias, rpm, imuz (schema.q)
+// what each drone sends (schema.q, gen.q's blockRows): telem rows at 50 Hz carry 3 measured values
+// (altitude, airspeed, vertical acceleration), rotor rows at 100 Hz carry 1 (rotor speed)
+const TELE_HZ = 50, ROTOR_HZ = 100;
+const ROWS_PER_DRONE = TELE_HZ + ROTOR_HZ, VALUES_PER_DRONE = 3 * TELE_HZ + ROTOR_HZ;
 const FEATURES = [
   ["dive", "Dive"], ["payload", "Payload release"], ["hover", "Hover and stare"], ["jink", "Evasive jinking"],
   ["jam", "Jamming (anomaly)"], ["swarm", "Hidden swarm"], ["laden", "Laden rotor"],
@@ -223,7 +225,7 @@ function connect(id) {
   ws.onopen = () => {
     L.up = true;
     // only the page that started the system sets its fleet and mode; any other page adopts the lanes'
-    if (starting) { send(id, { cmd: "fleet", n: st.fleet, hz: HZ }); send(id, { cmd: "mode", mode: st.mode }); localChange = Date.now(); }
+    if (starting) { send(id, { cmd: "fleet", n: st.fleet }); send(id, { cmd: "mode", mode: st.mode }); localChange = Date.now(); }
     setLink(id);
   };
   ws.onclose = () => { L.up = false; setLink(id); setTimeout(() => connect(id), 2000); };
@@ -254,7 +256,7 @@ function renderStats(id) {
   const L = LANES[id], s = L.stats;
   if (s) {
     L.el.querySelector(".rate").textContent = fmt.format(Math.round(s.rate));
-    L.el.querySelector(".values b").textContent = fmt.format(Math.round(s.rate * METRICS));
+    L.el.querySelector(".values b").textContent = fmt.format(Math.round(s.vrate || 0));
     setFig(L, "p50", ms(s.lag && s.lag.p50));
     setFig(L, "p99", ms(s.lag && s.lag.p99));
     setFig(L, "held", fmt.format(s.held));
@@ -265,7 +267,7 @@ function renderStats(id) {
     body.innerHTML = "";
     for (const r of (s.tap || []).slice(-8).reverse()) {
       const tr = document.createElement("tr");
-      for (const v of [String(r.time).replace(/^0D/, "").slice(0, 12), r.uav, num(r.alt, 1), num(r.ias, 1), num(r.rpm, 0), num(r.imuz, 2)]) {
+      for (const v of [String(r.time).replace(/^0D/, "").slice(0, 12), r.uav, num(r.alt, 1), num(r.ias, 1), num(r.imuz, 2), num(r.rpm, 0)]) {
         const td = document.createElement("td"); td.textContent = v; tr.append(td);
       }
       body.append(tr);
@@ -414,7 +416,7 @@ const fleetEl = document.getElementById("fleet");
   b.type = "button"; b.dataset.n = n;
   b.textContent = n === 0 ? "OFF" : n >= 1024 ? `${n / 1024}K` : `${n}`;
   b.title = n === 0 ? "Feed off: the drones stop, both lanes keep running and keep their rows (key 0)"
-    : `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows, ${fmt.format(n * HZ * METRICS)} metric values per second (key ${k})`;
+    : `${fmt.format(n)} drones: ${fmt.format(n * ROWS_PER_DRONE)} rows, ${fmt.format(n * VALUES_PER_DRONE)} metric values per second (key ${k})`;
   if (n === 0) b.className = "off";
   b.setAttribute("aria-pressed", String(n === st.fleet));
   b.onclick = () => setFleet(n);
@@ -427,7 +429,7 @@ function markFleet(n) {
 function setFleet(n) {
   markFleet(n); localChange = Date.now();
   if (!anyUp() && n > 0) startAll();            // stopped: start everything; the lanes get n when they connect
-  else sendBoth({ cmd: "fleet", n, hz: HZ });
+  else sendBoth({ cmd: "fleet", n });
   for (const id of Object.keys(LANES)) renderGrid(id);
   drawSpine();
 }
@@ -454,7 +456,7 @@ function adopt(id, s) {
     if (s.mode && s.mode !== st.mode) markMode(s.mode);
   } else if (LANES.kdb.up && LANES.kdb.stats) {
     const k = LANES.kdb.stats;
-    if (k.n != null && s.n !== k.n) send("duck", { cmd: "fleet", n: k.n, hz: k.hz });
+    if (k.n != null && s.n !== k.n) send("duck", { cmd: "fleet", n: k.n });
     if (k.mode && s.mode !== k.mode) send("duck", { cmd: "mode", mode: k.mode });
   }
 }

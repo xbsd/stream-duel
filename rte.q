@@ -14,23 +14,22 @@ arg:{[k;d] $[k in key o;first o k;d]}
 TPP:"J"$arg[`tp;"5110"]
 RDBP:"J"$arg[`rdb;"5111"]
 WATCH:1024
-N:1024; HZ:200
+N:1024
 KEEPS:1+CFG`window_s                    / seconds of rows kept (window plus a margin)
-buf:telem
 LASTA:0Np
 
-upd:{[t;x] w:where (x 2)<=N&WATCH; if[count w; `buf insert x@\:w];}
+/ telem and rotor (schema.q) hold only the watched drones' newest seconds
+upd:{[t;x] w:where (x 2)<=N&WATCH; if[count w; t insert x@\:w];}
 
-prune:{
-  if[0=count buf; :()];
-  t0:last[buf`time]-`timespan$`long$1e9*KEEPS+0.5;
-  buf::((buf`time) binr t0) _ buf}
+prune:{{[t] if[count v:value t;
+  t0:last[v`time]-`timespan$`long$1e9*KEEPS+0.5;
+  t set ((v`time) binr t0) _ v]} each `telem`rotor;}
 
-setFleet:{[n;hz] N::n; HZ::hz;}
+setFleet:{[n] N::n;}
 setMode:{[m] if[m in `tss`dtw; MODE::m]; MODE}
 
 run:{
-  r:analyse[buf;N&WATCH;MODE;HZ];
+  r:analyse[telem;rotor;N&WATCH;MODE];
   r[`watch]:N&WATCH; r[`engine]:`rte; r}
 / planted events of the last 60 s and every watched drone's airframe class, for the page's scoring
 planted60:{

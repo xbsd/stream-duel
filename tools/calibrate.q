@@ -1,37 +1,36 @@
 / tools/calibrate.q: choose config.json thresholds from planted ground truth.
 / q tools/calibrate.q -s 8 [-write 1]
-/ Generates SECS seconds of telemetry for drones 1..W with gen.q's sigDuel (as the feed handlers
-/ do), slides the analytics window along it every second, scores every drone with analytics.q,
+/ Generates SECS seconds of telem and rotor rows for drones 1..W with gen.q's blockRows (as the feed
+/ handlers do), slides the analytics window along them every second, scores every drone with analytics.q,
 / and labels each (drone, window) from planted[]. For each signature (tss and dtw modes) and for
 / the anomaly score it picks the threshold with the best F1 and prints precision and recall.
 / Swarm and rotor have fixed rules; their precision and recall are reported too.
 / With -write 1 it writes the chosen thresholds into config.json.
+\l schema.q
 \l gen.q
 \l analytics.q
 o:.Q.opt .z.x
 WRITE:$[`write in key o;1~"J"$first o`write;0b]
-W:256; HZ:200; SECS:96; S0:10                               / slots S0.. of wrapped time
+W:256; SECS:96; S0:10                                       / slots S0.. of wrapped time
 U0:1762000000 - 1762000000 mod 1024                          / a unix second at wrapped time 0
 ids:til W; P:{h01 h2[ids;x]} each 1+til 8
-uts:(SLOT*S0)+til[SECS*HZ]%HZ
-ts:raze W#'uts; ix:raze (count uts)#enlist ids; uav:1+ix     / sample-major, as fh.q emits
-v:sigDuel[ts;P[;ix];(count ts)#0b;uav]
+r:blockRows[(`long$TELEHZ*U0+SLOT*S0)+til SECS*TELEHZ;ids;P;{[ts;ix] (count ts)#0b}]
+T:`stime xasc flip `stime`uav`alt`ias`imuz!r 0
+R:`stime xasc flip `stime`uav`rpm!r 1
 tsAt:{[u] `timestamp$(`long$1e9*u)-UNIX}
-tbl:([] stime:tsAt U0+ts; uav:`int$uav; alt:`real$120+38*v 1; ias:`real$18+7*v 2;
-  rpm:`real$7200+1500*v 3; imuz:`real$2.4*v 0)
-tbl:`stime xasc tbl
--1"generated ",string[count tbl]," rows for ",string[W]," drones over ",string[SECS]," s";
+RN:`long$CFG[`rotor;`n]
+-1"generated ",string[count T]," telem and ",string[count R]," rotor rows for ",string[W]," drones over ",string[SECS]," s";
 pl:planted[tsAt U0+SLOT*S0;tsAt U0+SLOT*S0+SECS]
 pl:select from pl where uav<=W
 ends:U0+(SLOT*S0)+CFG[`window_s]+1+til `long$SECS-CFG[`window_s]+1   / window end times (unix s)
-f:HZ div CFG`ana_hz
-rows:{[e] (tbl`stime) binr tsAt e}
+/ the window as live: every row sent before unix second e
+winAt:{[e] t:tsAt e; win[((T`stime) binr t)#T;((R`stime) binr t)#R;W;CFG`window_s;RN]}
 / one evaluation pass: per window, raw scores for every drone
 evalWin:{[mode;e]
-  w:win[(rows e)#tbl;W;CFG`window_s;HZ];
-  st:sigTable[mode;w;f];
+  w:winAt e;
+  st:sigTable[mode;w];
   m:`long$CFG[`anomaly;`window_s]*CFG`ana_hz;
-  an:discord[m;] peach downM[w`imuz;f];
+  an:discord[m;] peach w`imuz;
   `e`uav`dist`anom!(e;w`uav;st`dist;an)}
 / labels: signature s is positive for drone u in window ending e when the window holds a planted
 / s's onset and at least the template's length of it (all of it, for events shorter than the
@@ -78,15 +77,15 @@ RES:`tss`dtw!2#enlist (`$())!()                              / mode -> feature -
  } each `tss`dtw;
 / swarm: every 4 s along the run; a found member is true when its group was coordinated for the
 / whole window, false when it was not coordinated at any time in the window (else not counted)
-sws:{[e] w:win[(rows e)#tbl;W;CFG`window_s;HZ]; found:distinct raze swarms[w;f];
+sws:{[e] w:winAt e; found:distinct raze swarms w;
   full:exec distinct uav from pl where kind=`swarm, t0<=e-CFG`window_s, t1>=e;
   any_:exec distinct uav from pl where kind=`swarm, t1>e-CFG`window_s, t0<e;
   (count found inter full;count found except any_;count full)} each ends where 0=(til count ends) mod 4
 s:sum sws
 -1"\nswarm (min_r ",string[CFG[`swarm;`min_r]],", ",string[count sws]," windows): members precision ",string[.01*`long$100*s[0]%1|s[0]+s 1],
   " recall ",string[.01*`long$100*s[0]%1|s 2],", false members ",string s 1;
-e:U0+(SLOT*(S0+2))+8; w:win[(rows e)#tbl;W;CFG`window_s;HZ]
-ro:rotor w; busy:exec distinct uav from pl where t1>e-CFG`window_s, t0<e, kind<>`swarm
+e:U0+(SLOT*(S0+2))+8; w:winAt e
+ro:rotorFind w; busy:exec distinct uav from pl where t1>e-CFG`window_s, t0<e, kind<>`swarm
 ok:select from ro where not uav in busy
 -1"rotor: class accuracy on drones without events ",string .01*`long$100*avg (ok`cls)=`A`B`C airClass ok`uav;
 ld:exec distinct uav from pl where kind=`laden, t0<=e-2.56, t1>=e

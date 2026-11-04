@@ -3,7 +3,8 @@
 DuckDB has no time-series search, so the window is extracted with SQL (store.Store.window) and the
 features are computed here: NumPy for z-normalized shape search, discords, correlation and FFT;
 dtaidistance (C) for DTW. Definitions, thresholds (config.json) and templates (templates.json) are
-the kdb+ lane's, so both lanes answer the same questions about the same rows.
+the kdb+ lane's, so both lanes answer the same questions about the same rows. Telemetry arrives at
+the analysis rate (50 Hz), the rotor at 100 Hz.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CFG = json.loads((ROOT / "config.json").read_text())
 TPL = json.loads((ROOT / "templates.json").read_text())
 SIGS = list(TPL)
+NEED = max(len(tp) for s in TPL.values() for tp in s.values())  # samples the longest template needs
 UNIX_MS_2000 = 946684800000.0
 ROWS_PER_CALL = 16  # drones per dtaidistance call (see dtw_profile)
 # Where DTW runs. The bridge sets a one-worker process pool (server.py): dtaidistance holds Python's
@@ -42,17 +44,6 @@ def zn(x: np.ndarray) -> np.ndarray:
     with np.errstate(invalid="ignore", divide="ignore"):
         z = (x - m) / s
     return np.where(s > 1e-12, z, 0.0)
-
-
-def down(x: np.ndarray, f: int) -> np.ndarray:
-    """Block means of f samples along the last axis (q: avg each f cut x; a short last block is
-    averaged on its own)."""
-    n = x.shape[-1]
-    full = n // f * f
-    head = x[..., :full].reshape(*x.shape[:-1], n // f, f).mean(axis=-1)
-    if full == n:
-        return head
-    return np.concatenate([head, x[..., full:].mean(axis=-1, keepdims=True)], axis=-1)
 
 
 def zdist_profile(series: np.ndarray, q: np.ndarray) -> np.ndarray:
@@ -126,10 +117,10 @@ def _dtw_profiles(
     return [dtw_profile(D[c], np.asarray(tp, dtype=np.float64), window) for c, tp in jobs]
 
 
-def sig_table(mode: str, w: Window, f: int) -> dict:
+def sig_table(mode: str, w: Window) -> dict:
     """Per signature, every drone's mean normalized distance over the signature's channels and the
-    match start (downsampled samples): (nsig, drones) arrays, before thresholds."""
-    D = {c: down(getattr(w, c), f) for c in ("alt", "ias", "imuz")}
+    match start (50 Hz samples): (nsig, drones) arrays, before thresholds."""
+    D = {c: getattr(w, c) for c in ("alt", "ias", "imuz")}
     jobs = [(c, tp) for s in SIGS for c, tp in TPL[s].items()]
     if mode == "dtw":
         args = (D, jobs, CFG["dtw_window"])
@@ -154,8 +145,8 @@ def sig_table(mode: str, w: Window, f: int) -> dict:
     return {"dist": np.array(dist), "idx": np.array(idx), "n": D["alt"].shape[1]}
 
 
-def signatures(mode: str, w: Window, f: int) -> list[dict]:
-    st = sig_table(mode, w, f)
+def signatures(mode: str, w: Window) -> list[dict]:
+    st = sig_table(mode, w)
     dist, idx = st["dist"], st["idx"]
     b = dist.argmin(axis=0)
     cols = np.arange(dist.shape[1])
@@ -181,22 +172,22 @@ def discord(m: int, x: np.ndarray) -> float:
     return float(zdist_profile(x[:k], x[k:]).min())
 
 
-def anomalies(w: Window, f: int) -> list[dict]:
+def anomalies(w: Window) -> list[dict]:
     m = round(CFG["anomaly"]["window_s"] * CFG["ana_hz"])
-    s = np.array([discord(m, row) for row in down(w.imuz, f)])
+    s = np.array([discord(m, row) for row in w.imuz])
     hit = np.flatnonzero(s > CFG["anomaly"]["threshold"])
     return [{"uav": int(w.uav[j]), "score": float(s[j])} for j in hit]
 
 
-def corr(w: Window, f: int, c: str) -> np.ndarray:
-    X = zn(np.diff(down(getattr(w, c), f), axis=1))
+def corr(w: Window, c: str) -> np.ndarray:
+    X = zn(np.diff(getattr(w, c), axis=1))
     return X @ X.T / X.shape[1]
 
 
-def swarms(w: Window, f: int) -> list[list[int]]:
+def swarms(w: Window) -> list[list[int]]:
     """Connected components of drones whose altitude and airspeed changes both correlate above
     min_r, as analytics.q's swarms (label propagation to the smallest index)."""
-    C = np.minimum(*(corr(w, f, c) for c in CFG["swarm"]["channels"]))
+    C = np.minimum(*(corr(w, c) for c in CFG["swarm"]["channels"]))
     adj = C > CFG["swarm"]["min_r"]
     lab = np.arange(len(adj))
     while True:
@@ -232,9 +223,9 @@ def fft_peak(x: np.ndarray, fs: float, lo: float, hi: float) -> np.ndarray:
 def rotor(w: Window) -> list[dict]:
     c = CFG["rotor"]
     n = int(c["n"])
-    if n > w.n:
+    if n > w.nr:
         return []
-    pk = fft_peak(w.rpm[:, -n:], float(w.hz), float(c["lo"]), float(c["hi"]))
+    pk = fft_peak(w.rpm[:, -n:], float(c["hz"]), float(c["lo"]), float(c["hi"]))
     classes = np.asarray(c["classes"], dtype=np.float64)
     cand = np.concatenate([classes, c["laden"] * classes])
     j = np.abs(pk[:, None] - cand[None, :]).argmin(axis=1)
@@ -244,20 +235,29 @@ def rotor(w: Window) -> list[dict]:
     ]
 
 
-def analyse(store: Store, watch: int, mode: str, hz: int) -> dict:
-    """One pass of every feature, timed, in analytics.q's output format."""
+def analyse(store: Store, watch: int, mode: str) -> dict:
+    """One pass of every feature, timed, in analytics.q's output format. A window shorter than the
+    longest template (the feed skipped samples) gives a "short" result instead, as analytics.q."""
     t0 = time.perf_counter()
-    w = store.window(watch, CFG["window_s"], hz)
+    w = store.window(watch, CFG["window_s"], int(CFG["rotor"]["n"]))
     tw = time.perf_counter()
     if w is None:
         return {"type": "analytics", "lane": "duckdb", "empty": True}
-    f = max(1, w.hz // CFG["ana_hz"])
+    if w.n < NEED:
+        return {
+            "type": "analytics",
+            "lane": "duckdb",
+            "short": True,
+            "have_s": w.n / CFG["ana_hz"],
+            "need_s": NEED / CFG["ana_hz"],
+            "newest": to_ms(w.newest),
+        }
     took = {"window": round((tw - t0) * 1000)}
     out = {}
     for name, fn in (
-        ("signatures", lambda: signatures(mode, w, f)),
-        ("anomaly", lambda: anomalies(w, f)),
-        ("swarm", lambda: swarms(w, f)),
+        ("signatures", lambda: signatures(mode, w)),
+        ("anomaly", lambda: anomalies(w)),
+        ("swarm", lambda: swarms(w)),
         ("rotor", lambda: rotor(w)),
     ):
         a = time.perf_counter()
@@ -269,7 +269,7 @@ def analyse(store: Store, watch: int, mode: str, hz: int) -> dict:
         "mode": mode,
         "took": took,
         "newest": to_ms(w.newest),
-        "rows": int(len(w.uav) * w.n),
+        "rows": int(len(w.uav) * (w.n + w.nr)),
         "watch": watch,
         "signatures": out["signatures"],
         "anomalies": out["anomaly"],

@@ -113,3 +113,36 @@ planted:{[w0;w1]                                             / (not t0;t1: those
   r:$[count ev;ev;([] uav:`int$();kind:`$();t0:`float$();t1:`float$())],$[count grp;grp;()];
   r:select from r where t1>=a, t0<=b+1;
   update start:tsOf t0, end:tsOf t1 from r}
+
+/ ---------------------------------------------------------------------------------------------
+/ Two rates (DESIGN.md). Each drone senses at SENSORHZ and sends two tables (schema.q):
+/ - telem at TELEHZ: altitude, airspeed and vertical acceleration, each the mean of the drone's
+/   TB sensor samples over the row's 20 ms, as a drone averages before it transmits;
+/ - rotor at ROTORHZ: rotor speed, every RB-th sensor sample (its 5..40 Hz band needs > 80 Hz).
+/ The analytics need no more: they work on telemetry at 50 Hz and the rotor at 100 Hz.
+SENSORHZ:200; TELEHZ:50; ROTORHZ:100
+TB:SENSORHZ div TELEHZ                  / sensor samples per telem row (4)
+RB:SENSORHZ div ROTORHZ                 / sensor samples per rotor row (2)
+SENSORNS:1000000000 div SENSORHZ        / 5 ms
+BLOCKNS:1000000000 div TELEHZ           / 20 ms: one telem row per drone per block
+UNIXNS:946684800000000000
+
+/ blockRows[bs;ids;P;alf]: the rows drones ids (0-based) send for blocks bs (block = 20 ms, counted
+/ from 1970). P: the drones' 8 parameter vectors; alf[ts;ix]: telemetry-kit's alert flags for rows
+/ ix (positions in ids) at wrapped times ts. Returns (telem columns; rotor columns) without the
+/ tickerplant's time column, each table ordered by sample time, then drone.
+blockRows:{[bs;ids;P;alf]
+  m:count bs; n:count ids;
+  ix:(m*n)#til n; kb:bs where m#n; uav:1+ids ix; p:P[;ix];
+  / the drone's TB sensor samples in each block: (imu;alt;ias;rpm) at sample k = TB*block + j
+  sub:{[kb;ix;p;uav;alf;j] k:(TB*kb)+j; ts:1e-9*(k*SENSORNS) mod 1024000000000;
+    sigDuel[ts;p;alf[ts;ix];uav]}[kb;ix;p;uav;alf] each til TB;
+  mean:{avg x} each flip sub;                                   / per channel, mean of the TB samples
+  tst:`timestamp$(kb*BLOCKNS)-UNIXNS;
+  telem:(tst;`int$uav;`real$120+38*mean 1;`real$18+7*mean 2;`real$2.4*mean 0);
+  / rotor: samples 0, RB, 2*RB.. of each block, in time order within the block
+  js:RB*til TB div RB;
+  il:{[n;x] $[n=0;x 0;raze raze flip n cut' x]}[n];             / interleave per block: j0 drones, j1 drones..
+  rst:il {[kb;j] `timestamp$(((TB*kb)+j)*SENSORNS)-UNIXNS}[kb] each js;
+  rotor:(rst;`int$il (count js)#enlist uav;`real$il {7200+1500*x 3} each sub js);
+  (telem;rotor)}

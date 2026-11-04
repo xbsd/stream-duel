@@ -1,7 +1,9 @@
 / fh.q: synthetic drone feed handler
 / q fh.q -p 5120 -shard 0 -of 1 -tp 5110   (Stream Duel ports, DESIGN.md)
-/ Owns the drones where id mod <of> = <shard>. Every 10 ms it generates every
-/ sample due since the last tick and publishes them to the tickerplant.
+/ Owns the drones where id mod <of> = <shard>. Every 10 ms it sends every 20 ms block that has
+/ ended since the last tick: per drone, one telem row (50 Hz) and two rotor rows (100 Hz), built
+/ by gen.q's blockRows from the drone's 200 Hz sensor samples.
+\l schema.q
 \l gen.q
 o:.Q.opt .z.x
 arg:{[k;d] $[k in key o;first o k;d]}
@@ -9,18 +11,18 @@ SHARD:"J"$arg[`shard;"0"]
 OF:"J"$arg[`of;"1"]
 TPH:hopen `$"::",arg[`tp;"5110"]
 ALERTP:0.006
-N:0; HZ:200; STEP:5000000; ids:`long$(); P:(); KLAST:0; CH:1000000
+N:0; ids:`long$(); P:(); KLAST:0; CH:1000000
 ALC:(`long$())!()
 nowNs:{946684800000000000+`long$.z.p}
 
-setFleet:{[n;hz]
+setFleet:{[n]
   ids::i where SHARD=(i:til n) mod OF;
   P::{h01 h2[ids;x]} each 1+til 8;
-  N::n; HZ::hz; STEP::1000000000 div hz;
+  N::n;
   ALC::(`long$())!();
-  CH::max 1,1000000 div max 1,count ids;
-  KLAST::nowNs[] div STEP;
-  -1"fleet ",string[n]," drones at ",string[hz]," Hz, this shard owns ",string count ids;
+  CH::max 1,1000000 div max 1,(1+TB div RB)*count ids;    / blocks per message: about 1M rows
+  KLAST::(nowNs[] div BLOCKNS)-1;
+  -1"fleet ",string[n]," drones (telemetry ",string[TELEHZ]," Hz, rotor ",string[ROTORHZ]," Hz), this shard owns ",string count ids;
  }
 
 alertVec:{[e]
@@ -33,25 +35,20 @@ alertRows:{[ts;ix]
   do[count u; w:where ep=u i; r[w]:(alertVec u i) ix w; i+:1];
   r}
 
-emit:{[ks]
-  m:count ks; n:count ids;
-  ix:(m*n)#til n;
-  kk:ks where m#n;
-  ts:1e-9*(kk*STEP) mod 1024000000000;
-  p:P[;ix];
-  v:sigDuel[ts;p;alertRows[ts;ix];1+ids ix];                 / planted events on drones 1..WATCH
-  st:`timestamp$(kk*STEP)-946684800000000000;
-  neg[TPH](".u.upd";`telem;(st;`int$1+ids ix;`real$120+38*v 1;`real$18+7*v 2;`real$7200+1500*v 3;`real$2.4*v 0));
+emit:{[bs]
+  r:blockRows[bs;ids;P;alertRows];
+  neg[TPH](".u.upd";`telem;r 0);
+  neg[TPH](".u.upd";`rotor;r 1);
  }
 
 onTimer:{
   if[0=count ids; :()];
-  k1:nowNs[] div STEP;
-  if[k1<=KLAST; :()];
-  k0:max(KLAST+1;k1-HZ div 2);
-  KLAST::k1;
-  ks:k0+til 1+k1-k0;
-  emit each (CH*til ceiling (count ks)%CH)_ks;
+  b1:(nowNs[] div BLOCKNS)-1;                    / the newest block that has ended
+  if[b1<=KLAST; :()];
+  b0:max(KLAST+1;b1-TELEHZ div 2);               / more than 0.5 s behind: skip the oldest blocks
+  KLAST::b1;
+  bs:b0+til 1+b1-b0;
+  emit each (CH*til ceiling (count bs)%CH)_bs;
   TPH"1";
  }
 

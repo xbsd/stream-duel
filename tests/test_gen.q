@@ -1,5 +1,6 @@
 / tests/test_gen.q: planted events, classes and groups in gen.q, against DESIGN.md.
 / q tests/test_gen.q   (exits 0 when every check passes)
+\l schema.q
 \l gen.q
 fails:0
 check:{[name;ok] -1 (("FAIL ";"pass ") ok),name; if[not ok; fails+:1]}
@@ -40,10 +41,22 @@ if[count jm;
   j:first jm; r:row j`uav; st:`long$HZ*(j[`t0]-SLOT*S0) mod SLOT;
   dj:dev 1_deltas (v[0] r) st+til 2*HZ; dq:dev 1_deltas (v[0] r) til HZ;
   check["jamming makes vertical acceleration noisy"; dj>5*dq]];
-/ rotor: dominant 5..40 Hz frequency is the class frequency (drones that are not laden in the slot)
+/ what the drones send (blockRows): telem at 50 Hz = mean of 4 sensor samples, rotor at 100 Hz
+CFG:.j.k raze read0`:config.json
+check["config.json's rates are the generator's"; (CFG[`ana_hz]=TELEHZ) and CFG[`rotor;`hz]=ROTORHZ]
+b0:`long$TELEHZ*U0+SLOT*S0
+r:blockRows[b0+til `long$SLOT*TELEHZ;ids;P;{[ts;ix] (count ts)#0b}]
+T:flip `stime`uav`alt`ias`imuz!r 0; R:flip `stime`uav`rpm!r 1
+check["one telem row per drone per 20 ms, two rotor rows"; (count[T]=n*SLOT*TELEHZ) and count[R]=n*SLOT*ROTORHZ]
+t1:select from T where uav=1; r1:select from R where uav=1
+check["telem altitude is the mean of the drone's 4 sensor samples"; 1e-4>max abs t1[`alt]-`real$120+38*avg each 4 cut v[1] row 1]
+check["rotor is every second sensor sample"; 1e-3>max abs r1[`rpm]-`real$7200+1500*(v[3] row 1) 2*til count r1]
+check["rows are in sample-time order"; (T[`stime]~asc T`stime) and R[`stime]~asc R`stime]
+/ rotor: dominant 5..40 Hz frequency over 256 samples at 100 Hz is the class frequency (drones not
+/ laden in the slot)
 ok:(1+til n) except busy                                        / rotor untouched by events
-win:raze {[d] 512#(v[3] row d)} each ok
-pk:fftpeak[win;512;`float$HZ;5f;40f]
+win:raze {[d] 256#exec rpm from R where uav=d} each ok
+pk:fftpeak[`float$win;256;`float$ROTORHZ;5f;40f]
 check["rotor peak = airframe class frequency (11/17/23 Hz) within 0.3 Hz"; all 0.3>abs pk-CLASSHZ airClass ok]
 check["all three airframe classes occur"; 3=count distinct airClass ok]
 / no drone's own parameters equal a group's (that made drone g+501 fly group g's waveform)
