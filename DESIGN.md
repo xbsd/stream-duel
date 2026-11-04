@@ -14,6 +14,7 @@ Built for an internal KX audience. Everything is synthetic.
 | `rdb.q` | 5111 | kdb+ | RDB: stores `telem`, measures lag, serves the page over a websocket and relays the real-time engine's results |
 | `rte.q` | 5112 | kdb+ | Real-time engine: subscribes to the 1,024 watched drones only (`.u.subw`), keeps their last seconds, runs `analytics.q` every second |
 | `bridge/` (Python) | 5130 | DuckDB | Subscribes to the tickerplant over kdb+ IPC (PyKX, unlicensed: no q runtime), appends to an in-memory DuckDB, measures lag, runs the analytics, serves the page over a websocket |
+| `launcher.py` (Python) | 5100 | | Runs `start.sh` or `stop.sh --keep-launcher` when the page asks; localhost only, and only for a page opened from a file or from localhost. The page's **Shut down** and **Start** go through it. |
 | `stream-duel.html` | | | The page: two lanes, opened as a file |
 
 Ports are telemetry-kit's plus 100, so both kits can run at once.
@@ -76,7 +77,7 @@ swarms:[[uav...]], rotor:[[uav,hz,class,laden]]}`.
 
 ## Ingest metrics (both lanes, every 250 ms)
 
-`{type:"stats", lane, rate (rows/s, smoothed), total, held, lag:{p50,p99} (ms, tickerplant stamp to
+`{type:"stats", lane, n (fleet), hz, mode, rate (rows/s, smoothed), total, held, lag:{p50,p99} (ms, tickerplant stamp to
 queryable, row-weighted over the last 5 s), mem (bytes), dropped (rows the tickerplant skipped for
 this lane), tap:[8 newest rows]}`. kdb+: lag at insert in the RDB. DuckDB: lag after the insert
 commits. Same machine, same clock.

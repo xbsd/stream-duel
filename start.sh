@@ -20,7 +20,7 @@ SHARDS=${SHARDS:-$AUTO}
 THREADS=${THREADS:-8}
 MAXROWS=${MAXROWS:-60000000}
 mkdir -p logs
-[ -f logs/pids ] && ./stop.sh >/dev/null
+[ -f logs/pids ] && ./stop.sh --keep-launcher >/dev/null
 : > logs/pids
 nohup "$Q" tp.q -p 5110 < /dev/null > logs/tp.log 2>&1 &
 echo $! >> logs/pids
@@ -37,6 +37,10 @@ nohup "$Q" rte.q -p 5112 -tp 5110 -rdb 5111 -s "$THREADS" < /dev/null > logs/rte
 echo $! >> logs/pids
 OMP_NUM_THREADS="$THREADS" PYKX_UNLICENSED=true nohup uv run python -m bridge --port 5130 --tp 5110 --maxrows "$MAXROWS" < /dev/null > logs/bridge.log 2>&1 &
 echo $! >> logs/pids
+# the launcher (:5100) lets the page start everything again after its "Shut down"; ./stop.sh stops it
+if ! pgrep -f "launcher.py --port 5100" >/dev/null; then
+  nohup uv run python launcher.py --port 5100 < /dev/null > logs/launcher.log 2>&1 &
+fi
 sleep 3
-echo "Running: tickerplant :5110, kdb+ lane (RDB :5111, real-time engine :5112), DuckDB lane (bridge :5130), $SHARDS feed handler(s) from :5120."
-echo "Open stream-duel.html in your browser. Logs are in ./logs. Stop with ./stop.sh"
+echo "Running: tickerplant :5110, kdb+ lane (RDB :5111, real-time engine :5112), DuckDB lane (bridge :5130), $SHARDS feed handler(s) from :5120, launcher :5100."
+echo "Open stream-duel.html in your browser. Logs are in ./logs. Stop everything with ./stop.sh"

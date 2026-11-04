@@ -57,18 +57,22 @@ You need:
 ```bash
 ./start.sh                 # builds the C libraries in lib/ if needed, starts every process
 open stream-duel.html      # the page; give it a minute to collect 60 s of scores
-./stop.sh                  # stops everything
+./stop.sh                  # stops everything, the launcher too
 ```
 
 The page is a plain HTML file. It needs no web server and no build, and it connects to the two
-lanes by itself.
+lanes by itself. A page can't start processes, so `./start.sh` also starts a small **launcher**
+(`launcher.py`, port 5100). It lets the page run `start.sh` and `stop.sh`, and nothing else. It
+listens on this machine only and accepts only a page opened from a file or from localhost.
 
 | To | Do |
 |---|---|
 | Stop the drones but keep everything running | click **OFF** (red, key `0`) |
 | Start the drones again | click a fleet size, or press keys `1`-`7` |
-| Stop every process | `./stop.sh`, or **Shut down** on the page (click twice) |
-| Start every process | `./start.sh` (the page can't start processes that aren't running) |
+| Stop every process but the launcher | **Shut down** on the page (click twice). It turns into a green **Start** button. |
+| Start everything again from the page | **Start**, or any fleet size (that size is flown) |
+| Stop every process, the launcher too | `./stop.sh`. The page then shows the command to start again. |
+| Start every process from a terminal | `./start.sh` |
 
 ## A tour of the page
 
@@ -83,13 +87,13 @@ both are laid out the same way. **How fresh is each engine?** sits between them.
 | **Shape search** | How both lanes search for the four signature manoeuvres. **Z-normalized** compares shapes point by point after scaling (time series search). **Time-warped (DTW)** also matches a manoeuvre flown faster or slower, and costs more. Each mode has its own thresholds. |
 | **Outline planted events** | Draws an outline on every drone in the grids that has a planted event in progress (see below). |
 | **Clear both lanes** | Deletes every stored row in both lanes and restarts the page's scoring. Click twice within 3 s: the first click arms it. |
-| **Shut down** | Stops every process: feed handlers, tickerplant, both lanes. Click twice within 3 s. The page then shows both lanes as not running; `./start.sh` brings them back. |
+| **Shut down** / **Start** | **Shut down** stops every process (feed handlers, tickerplant, both lanes) through the launcher, which force-stops anything stuck. Click twice within 3 s. The button then turns into a green **Start**, which starts everything again; picking a fleet size does the same and flies that size. If the launcher isn't running either (after `./stop.sh`), the button is greyed out and the page shows the command to run. |
 
 ### Each lane
 
 **Name and connection.** "connected on :5111" (kdb+) or ":5130" (DuckDB) while the page's websocket
-to that lane is open. If the lane isn't running it says "not running on :5111" in red, and the page
-retries every 2 s.
+to that lane is open. If the lane isn't running it says "not running on :5111" in red, its last
+figures are greyed out (they're no longer live), and the page retries every 2 s.
 
 **The big number: rows ingested per second.** Rows the lane stored in the last 250 ms, as a rate,
 smoothed: each update moves 40% of the way to the new value. With the feed keeping up, it matches
@@ -148,8 +152,22 @@ are receiving the same live feed.
 
 The middle column plots both lanes' 99th-percentile lag for the last 60 s, on one log scale from
 0.1 ms to 10 s. Below it, the verdict divides the two current 99th percentiles ("kdb+ is 5.4×
-fresher") and shows both. It says "Waiting for both lanes" until both report, and "Feed off" while
-the fleet is OFF.
+fresher") and shows both. Otherwise it says what state the system is in:
+
+| Verdict | When |
+|---|---|
+| Connecting… | the first 2.5 s after the page opens |
+| Starting… / Stopping… | the launcher is running `start.sh` or `stop.sh` |
+| Stopped | no lane is running, and the launcher is: press **Start** or pick a fleet size |
+| Not running | neither the lanes nor the launcher are running: the page shows the `./start.sh` command |
+| Start failed | `start.sh` failed; the page shows its last line, and `logs/` has the rest |
+| Feed off | the fleet is OFF |
+| Waiting for both lanes | the lanes are up but haven't both reported lag yet |
+
+**Several pages at once.** Every open page shows the fleet and mode the lanes are running, whoever
+set them. A page sends its own fleet and mode only when you click, or when it started the system.
+The RDB's fleet is the one flying, because it drives the feed handlers. If the DuckDB lane ever
+disagrees with it, the page brings it into line.
 
 ### The footer
 
@@ -212,6 +230,7 @@ The message formats are in [DESIGN.md](DESIGN.md).
 | `rdb.q` | 5111 | kdb+ | RDB; the page's websocket for the kdb+ lane |
 | `rte.q` | 5112 | kdb+ | Real-time engine |
 | `bridge/` | 5130 | DuckDB | Bridge and DuckDB; the page's websocket for the DuckDB lane |
+| `launcher.py` | 5100 | | Lets the page run `start.sh` and `stop.sh` (localhost only) |
 
 ## The drones and the planted events
 
@@ -400,7 +419,7 @@ you can replay with `-11!`.
 
 ```bash
 q tests/test_fft.q && q tests/test_blas.q && q tests/test_gen.q   # the C libraries and the generator
-uv run pytest                              # the cross-check and the DuckDB store
+uv run pytest                              # the cross-check, the DuckDB store and the launcher
 q tools/calibrate.q -s 8                   # precision and recall of every feature against planted events
 ```
 
@@ -411,7 +430,9 @@ with `q tools/fixture.q -s 4`.
 
 | You see | Do this |
 |---|---|
-| "not running on :5111" or ":5130" | Start the processes: `./start.sh`. |
+| "not running on :5111" or ":5130" | Press **Start** on the page; if it's greyed out, run `./start.sh`. |
+| Picking a fleet size after **Shut down** does nothing | The launcher isn't running (you ran `./stop.sh`, or started with an older `start.sh`). Run `./start.sh` once; from then on the page can start everything. |
+| The fleet changes by itself | Another tab has an older copy of the page, which sets its own fleet whenever it reconnects. Reload or close it. |
 | `./start.sh` fails with "address already in use" | Run `./stop.sh` first. It stops anything left from a previous run, and force-stops any process that hasn't exited after 5 s. |
 | No OFF button on the page | Reload the page: the tab has an old copy. |
 | **rows dropped** stays high after you lower the fleet | It counts from the tickerplant's start. Restart (`./stop.sh`, `./start.sh`) to reset it. |
@@ -431,8 +452,9 @@ Each process logs to `logs/` (`tp.log`, `fh0.log` …, `rdb.log`, `rte.log`, `br
 | `bridge/` | the DuckDB lane (5130): `server.py` (subscription, websocket), `store.py` (DuckDB), `analytics.py` (the pattern matching) |
 | `config.json`, `templates.json` | shared settings, thresholds and signature templates |
 | `tools/templates.q`, `tools/calibrate.q`, `tools/fixture.q` | write the templates, choose thresholds against planted truth, write the cross-check fixture |
-| `start.sh`, `stop.sh` | start and stop every process |
-| `tests/` | the cross-check, the DuckDB store, the C libraries, the generator |
+| `start.sh`, `stop.sh` | start and stop every process (`stop.sh --keep-launcher` leaves the launcher running) |
+| `launcher.py` | lets the page start and stop everything (port 5100, localhost only) |
+| `tests/` | the cross-check, the DuckDB store, the launcher, the C libraries, the generator |
 | `DESIGN.md` | the contract both lanes and the page follow, including message formats |
 
 ## Glossary

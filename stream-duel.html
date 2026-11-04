@@ -14,6 +14,7 @@
   --kdb: #2445D6;
   --duck: #B86E00;
   --alert: #C8322B;
+  --go: #1E7B4F;
   --cls-a: #CBD4DB;
   --cls-b: #B9C4CD;
   --cls-c: #A6B3BE;
@@ -42,6 +43,8 @@ h1 span { font-weight: 400; color: var(--ink-2); margin-left: 10px; font-size: 1
 .ctl-label { color: var(--ink-2); }
 .danger { border: 1px solid var(--rule); background: transparent; padding: 4px 10px; border-radius: 3px; cursor: pointer; }
 .danger.armed { border-color: var(--alert); color: var(--alert); }
+#stopBtn.go { background: var(--go); border-color: var(--go); color: #fff; font-weight: 600; }
+#stopBtn:disabled { opacity: 0.6; cursor: default; }
 
 main { display: grid; grid-template-columns: minmax(0, 1fr) 220px minmax(0, 1fr); }
 .lane { padding: 22px 28px 28px; min-width: 0; }
@@ -65,6 +68,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 220px minmax(0, 1fr)
 .fig b { display: block; font-size: 20px; font-weight: 600; }
 .fig span { color: var(--ink-2); font-size: 12.5px; }
 .fig.bad b { color: var(--alert); }
+/* a lane that isn't running keeps its last figures, greyed: they are not live */
+.lane.down .rate, .lane.down .figs, .lane.down .grid-wrap, .lane.down table { opacity: 0.35; }
 
 section.block { margin-top: 22px; }
 .block h2 { font-size: 13px; font-weight: 600; margin: 0 0 8px; color: var(--ink); }
@@ -211,7 +216,12 @@ function connect(id) {
   let ws;
   try { ws = new WebSocket(L.url); } catch (_) { setTimeout(() => connect(id), 2000); return; }
   L.ws = ws;
-  ws.onopen = () => { L.up = true; setLink(id); send(id, { cmd: "fleet", n: st.fleet, hz: HZ }); send(id, { cmd: "mode", mode: st.mode }); };
+  ws.onopen = () => {
+    L.up = true;
+    // only the page that started the system sets its fleet and mode; any other page adopts the lanes'
+    if (starting) { send(id, { cmd: "fleet", n: st.fleet, hz: HZ }); send(id, { cmd: "mode", mode: st.mode }); localChange = Date.now(); }
+    setLink(id);
+  };
   ws.onclose = () => { L.up = false; setLink(id); setTimeout(() => connect(id), 2000); };
   ws.onerror = () => {};
   ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (_) { return; } onMsg(id, m); };
@@ -220,11 +230,13 @@ function setLink(id) {
   const L = LANES[id], el = L.el.querySelector(".link");
   el.textContent = L.up ? `connected on :${L.url.split(":").pop()}` : `not running on :${L.url.split(":").pop()}`;
   el.classList.toggle("down", !L.up);
+  L.el.classList.toggle("down", !L.up);
+  renderRun();
 }
 
 function onMsg(id, m) {
   const L = LANES[id];
-  if (m.type === "stats") { L.stats = m; renderStats(id); pushLag(id, m); }
+  if (m.type === "stats") { L.stats = m; adopt(id, m); renderStats(id); pushLag(id, m); }
   else if (m.type === "analytics" && m.took) { L.ana = m; addReports(id, m); renderGrid(id); renderScore(id); renderStats(id); }
   else if (m.type === "planted") { st.planted = m.events || []; st.classes = m.classes || []; for (const k of Object.keys(LANES)) { renderGrid(k); renderScore(k); } }
   else if (m.type === "shutdown") { L.up = false; setLink(id); }
@@ -284,19 +296,25 @@ function drawSpine() {
     g.stroke();
   }
   const k = LANES.kdb.stats, d = LANES.duck.stats, v = document.getElementById("verdict");
-  if (st.fleet === 0) {
-    v.innerHTML = ""; v.append("Feed off");
-    const small = document.createElement("small");
-    small.textContent = "No drones are flying. Pick a fleet size to start them; both lanes keep what they stored.";
-    v.append(small);
-  } else if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
+  const say = (big, note) => {
+    v.innerHTML = ""; v.append(big);
+    if (note) { const small = document.createElement("small"); small.textContent = note; v.append(small); }
+  };
+  if (starting || LAUNCH.state === "starting") say("Starting…", "Feed handlers, tickerplant and both lanes: about 10 seconds.");
+  else if (LAUNCH.state === "stopping") say("Stopping…");
+  else if (!anyUp() && Date.now() - BOOT < 2500) say("Connecting…");
+  else if (!anyUp() && LAUNCH.state === "failed") say("Start failed", LAUNCH.detail || `See the logs in ${DIR}/logs`);
+  else if (!anyUp() && LAUNCH.up) say("Stopped", "Press Start, or pick a fleet size, to start everything again.");
+  else if (!anyUp()) say("Not running", `Start it in a terminal: cd ${DIR} && ./start.sh`);
+  else if (st.fleet === 0) say("Feed off", "No drones are flying. Pick a fleet size to start them; both lanes keep what they stored.");
+  else if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
     const r = d.lag.p99 / k.lag.p99;
     v.innerHTML = "";
     v.append(r >= 1 ? `kdb+ is ${r.toFixed(r < 10 ? 1 : 0)}× fresher` : `DuckDB is ${(1 / r).toFixed(1)}× fresher`);
     const small = document.createElement("small");
     small.textContent = `99th percentile lag: kdb+ ${ms(k.lag.p99)}, DuckDB ${ms(d.lag.p99)}`;
     v.append(small);
-  }
+  } else say("Waiting for both lanes");
 }
 
 /* ---- what each lane found, scored against the planted schedule ---- */
@@ -397,10 +415,14 @@ const fleetEl = document.getElementById("fleet");
   b.onclick = () => setFleet(n);
   fleetEl.append(b);
 });
-function setFleet(n) {
+function markFleet(n) {
   st.fleet = n;
   for (const b of fleetEl.children) b.setAttribute("aria-pressed", String(Number(b.dataset.n) === n));
-  sendBoth({ cmd: "fleet", n, hz: HZ });
+}
+function setFleet(n) {
+  markFleet(n); localChange = Date.now();
+  if (!anyUp() && n > 0) startAll();            // stopped: start everything; the lanes get n when they connect
+  else sendBoth({ cmd: "fleet", n, hz: HZ });
   for (const id of Object.keys(LANES)) renderGrid(id);
   drawSpine();
 }
@@ -408,11 +430,29 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest("input, select, textarea")) return;
   const k = Number(e.key); if (e.key.trim() && k >= 0 && k <= FLEET.length) setFleet(k ? FLEET[k - 1] : 0);
 });
+function markMode(m) {
+  st.mode = m;
+  for (const x of document.querySelectorAll(".seg button")) x.setAttribute("aria-pressed", String(x.dataset.mode === m));
+}
 for (const b of document.querySelectorAll(".seg button")) b.onclick = () => {
-  st.mode = b.dataset.mode;
-  for (const x of document.querySelectorAll(".seg button")) x.setAttribute("aria-pressed", String(x === b));
+  markMode(b.dataset.mode); localChange = Date.now();
   sendBoth({ cmd: "mode", mode: st.mode });
 };
+/* follow the fleet and mode the lanes run, whoever set them (another tab, a script), except just
+   after this page changed them: the next stats may still carry the old values. The RDB drives the
+   feed handlers, so its fleet is the one flying; the DuckDB lane is kept in step with it. */
+let localChange = 0;
+function adopt(id, s) {
+  if (starting || Date.now() - localChange < 2000) return;
+  if (id === "kdb") {
+    if (s.n != null && s.n !== st.fleet) { markFleet(s.n); for (const k of Object.keys(LANES)) renderGrid(k); }
+    if (s.mode && s.mode !== st.mode) markMode(s.mode);
+  } else if (LANES.kdb.up && LANES.kdb.stats) {
+    const k = LANES.kdb.stats;
+    if (k.n != null && s.n !== k.n) send("duck", { cmd: "fleet", n: k.n, hz: k.hz });
+    if (k.mode && s.mode !== k.mode) send("duck", { cmd: "mode", mode: k.mode });
+  }
+}
 document.getElementById("showPlanted").onchange = () => { renderGrid("kdb"); renderGrid("duck"); };
 function armed(btn, label, armedLabel, act) {
   let timer = null;
@@ -428,10 +468,64 @@ function armed(btn, label, armedLabel, act) {
 armed(document.getElementById("clearBtn"), "Clear both lanes", "Click again to clear", () => {
   sendBoth({ cmd: "clear" }); for (const L of Object.values(LANES)) { L.reports = []; L.lagHist = []; L.since = null; }
 });
-armed(document.getElementById("stopBtn"), "Shut down", "Click again to shut down", () => sendBoth({ cmd: "shutdown" }));
+/* ---- starting and stopping: launcher.py on :5100 runs start.sh and stop.sh for the page ---- */
+const LAUNCH = { url: "ws://localhost:5100", ws: null, up: false, state: "idle", detail: "" };
+const DIR = decodeURIComponent(location.pathname).replace(/\/[^/]*$/, "") || ".";
+const BOOT = Date.now();
+let starting = 0;                                 // when this page asked to start (ms), else 0
+function anyUp() { return Object.values(LANES).some((L) => L.up); }
+function allUp() { return Object.values(LANES).every((L) => L.up); }
+function connectLauncher() {
+  let ws;
+  try { ws = new WebSocket(LAUNCH.url); } catch (_) { setTimeout(connectLauncher, 2000); return; }
+  LAUNCH.ws = ws;
+  ws.onopen = () => { LAUNCH.up = true; renderRun(); };
+  ws.onclose = () => { LAUNCH.up = false; renderRun(); setTimeout(connectLauncher, 2000); };
+  ws.onerror = () => {};
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+    if (m.type !== "launcher") return;
+    LAUNCH.state = m.state; LAUNCH.detail = m.detail || "";
+    if (m.state === "failed") starting = 0;
+    renderRun();
+  };
+}
+function startAll() {
+  if (!LAUNCH.up || starting || LAUNCH.state === "starting") return;
+  if (st.fleet === 0) markFleet(1024);
+  starting = Date.now();
+  LAUNCH.ws.send(JSON.stringify({ cmd: "start" }));
+  renderRun();
+}
+const stopBtn = document.getElementById("stopBtn");
+let stopTimer = null;
+function renderRun() {
+  if (starting && (allUp() || Date.now() - starting > 30000)) starting = 0;
+  if (!stopBtn.classList.contains("armed")) {
+    const stopped = !anyUp(), busy = !!starting || LAUNCH.state !== "idle" && LAUNCH.state !== "failed";
+    stopBtn.classList.toggle("go", stopped);
+    stopBtn.textContent = busy ? (LAUNCH.state === "stopping" ? "Stopping…" : "Starting…") : stopped ? "Start" : "Shut down";
+    stopBtn.disabled = busy || (stopped && !LAUNCH.up);
+    stopBtn.title = stopped ? (LAUNCH.up ? "Start the feed handlers, the tickerplant and both lanes"
+      : `Run ./start.sh in ${DIR}: the launcher isn't running`) : "Stop every process (click twice)";
+  }
+  drawSpine();
+}
+stopBtn.onclick = () => {
+  if (!anyUp()) { startAll(); return; }
+  if (!stopBtn.classList.contains("armed")) {
+    stopBtn.classList.add("armed"); stopBtn.textContent = "Click again to shut down";
+    stopTimer = setTimeout(() => { stopBtn.classList.remove("armed"); renderRun(); }, 3000);
+    return;
+  }
+  clearTimeout(stopTimer); stopBtn.classList.remove("armed");
+  if (LAUNCH.up) LAUNCH.ws.send(JSON.stringify({ cmd: "stop" }));   // stop.sh: force-stops anything stuck
+  else sendBoth({ cmd: "shutdown" });
+  renderRun();
+};
 
-connect("kdb"); connect("duck");
-setInterval(() => { drawSpine(); for (const id of Object.keys(LANES)) renderStats(id); }, 1000);
+connect("kdb"); connect("duck"); connectLauncher();
+setInterval(() => { renderRun(); for (const id of Object.keys(LANES)) renderStats(id); }, 1000);
 </script>
 </body>
 </html>

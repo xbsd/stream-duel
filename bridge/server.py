@@ -125,6 +125,7 @@ class Lane:
             "lane": "duckdb",
             "n": self.n,
             "hz": self.hz,
+            "mode": self.mode,
             "demand": self.n * self.hz,
             "rate": self.rate,
             "total": total,

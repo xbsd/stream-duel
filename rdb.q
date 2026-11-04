@@ -43,8 +43,8 @@ lagStats:{
   `p50`p99!{[v;c;tot;q] v first where c>=q*tot}[LAGV s;c;tot] each 0.5 0.99}
 tap:{select time:string time,uav,alt,ias,rpm,imuz from (neg min 8,count telem)#telem}
 dropped:{d:@[TPH;".u.drops[]";{()!()}]; $[`kdb in key d;d`kdb;0]}
-stats:{`type`lane`n`hz`demand`rate`total`held`mem`lag`dropped`maxrows`tap!(
-  `stats;`kdb;N;HZ;N*HZ;RATE;TOTAL;count telem;(.Q.w[])`used;lagStats[];dropped[];MAXROWS;tap[])}
+stats:{`type`lane`n`hz`mode`demand`rate`total`held`mem`lag`dropped`maxrows`tap!(
+  `stats;`kdb;N;HZ;MODE;N*HZ;RATE;TOTAL;count telem;(.Q.w[])`used;lagStats[];dropped[];MAXROWS;tap[])}
 
 / the newest window's rows (by tickerplant stamp, which only grows), then the analytics
 tailRows:{[secs]
