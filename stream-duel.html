@@ -63,6 +63,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 220px minmax(0, 1fr)
 .kdb .rate { color: var(--kdb); }
 .duck .rate { color: var(--duck); }
 .rate-unit { color: var(--ink-2); font-size: 14px; margin-top: 4px; }
+.values { color: var(--ink-2); font-size: 14px; margin-top: 2px; }
+.values b { color: var(--ink); font-weight: 600; }
 .figs { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 22px; margin: 16px 0 6px; justify-content: start; }
 .duck .figs { justify-content: end; }
 .fig b { display: block; font-size: 20px; font-weight: 600; }
@@ -148,6 +150,7 @@ footer p { margin: 4px 0; max-width: 110ch; }
   <p class="how"></p>
   <div class="rate">0</div>
   <div class="rate-unit">rows ingested per second</div>
+  <div class="values" title="Each row carries 4 measured values: altitude, airspeed, rotor speed and vertical acceleration. With the drone id, sample time and tickerplant stamp, a row is 7 values, 36 bytes."><b>0</b> metric values per second, 4 per row</div>
   <div class="figs">
     <div class="fig" data-f="p50"><b>-</b><span>lag, median</span></div>
     <div class="fig" data-f="p99"><b>-</b><span>lag, 99th pct</span></div>
@@ -189,6 +192,7 @@ const LANES = {
 };
 const FLEET = [64, 256, 1024, 4096, 16384, 65536, 262144];
 const HZ = 200;
+const METRICS = 4;                                 // measured values per row: alt, ias, rpm, imuz (schema.q)
 const FEATURES = [
   ["dive", "Dive"], ["payload", "Payload release"], ["hover", "Hover and stare"], ["jink", "Evasive jinking"],
   ["jam", "Jamming (anomaly)"], ["swarm", "Hidden swarm"], ["laden", "Laden rotor"],
@@ -250,6 +254,7 @@ function renderStats(id) {
   const L = LANES[id], s = L.stats;
   if (s) {
     L.el.querySelector(".rate").textContent = fmt.format(Math.round(s.rate));
+    L.el.querySelector(".values b").textContent = fmt.format(Math.round(s.rate * METRICS));
     setFig(L, "p50", ms(s.lag && s.lag.p50));
     setFig(L, "p99", ms(s.lag && s.lag.p99));
     setFig(L, "held", fmt.format(s.held));
@@ -409,7 +414,7 @@ const fleetEl = document.getElementById("fleet");
   b.type = "button"; b.dataset.n = n;
   b.textContent = n === 0 ? "OFF" : n >= 1024 ? `${n / 1024}K` : `${n}`;
   b.title = n === 0 ? "Feed off: the drones stop, both lanes keep running and keep their rows (key 0)"
-    : `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows per second (key ${k})`;
+    : `${fmt.format(n)} drones at ${HZ} Hz: ${fmt.format(n * HZ)} rows, ${fmt.format(n * HZ * METRICS)} metric values per second (key ${k})`;
   if (n === 0) b.className = "off";
   b.setAttribute("aria-pressed", String(n === st.fleet));
   b.onclick = () => setFleet(n);

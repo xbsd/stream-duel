@@ -99,6 +99,11 @@ figures are greyed out (they're no longer live), and the page retries every 2 s.
 smoothed: each update moves 40% of the way to the new value. With the feed keeping up, it matches
 the fleet: 1,024 drones × 200 Hz ≈ 205,000.
 
+**Metric values per second.** The line under it: the same rate × 4, the measured values each row
+carries (altitude, airspeed, rotor speed, vertical acceleration). At 1,024 drones that is about
+819,000 a second. A row also carries the drone id, the sample time and the tickerplant stamp: 7
+values, 36 bytes.
+
 **The eight figures**, updated every 250 ms (ingest) and every second (analysis):
 
 | Figure | What it means | How it's measured |
@@ -234,9 +239,42 @@ The message formats are in [DESIGN.md](DESIGN.md).
 
 ## The drones and the planted events
 
-Each row is one sample of one drone: `time` (tickerplant stamp), `stime` (sample time), `uav` (drone
-id), `alt` (altitude, m), `ias` (airspeed, m/s), `rpm` (rotor speed) and `imuz` (vertical
-acceleration, m/s²): 36 bytes. The signals come from telemetry-kit's generator, `gen.q`. They are
+Each row is one sample of one drone: 4 measured metrics plus 3 identifiers, 36 bytes.
+
+| Column | What it is | Type | Bytes |
+|---|---|---|---|
+| `alt` | altitude, m | real | 4 |
+| `ias` | airspeed, m/s | real | 4 |
+| `rpm` | rotor speed | real | 4 |
+| `imuz` | vertical acceleration, m/s² | real | 4 |
+| `uav` | drone id | int | 4 |
+| `stime` | sample time: when the drone measured it | timestamp | 8 |
+| `time` | tickerplant stamp: when it entered the pipeline | timespan | 8 |
+
+Every drone sends 200 rows a second:
+
+| Fleet | Rows a second | Metric values a second | Data a second |
+|---|---|---|---|
+| 64 | 12,800 | 51,200 | 0.46 MB |
+| 1K | 204,800 | 819,200 | 7.4 MB |
+| 16K | 3.3M | 13.1M | 118 MB |
+| 64K | 13.1M | 52.4M | 472 MB |
+| 256K | 52.4M asked | 210M asked | 1.9 GB asked |
+
+Each lane stores all of it.
+
+**Four metrics is the minimum for every feature.** Each one is the only source for at least one
+feature:
+
+| Metric | Used by | Without it |
+|---|---|---|
+| `alt` | dive, swarm | dives lose their main shape (the altitude drop), and swarm detection is left with one channel. One channel lets chance correlations among a thousand drones form false groups. |
+| `ias` | dive, hover and stare, swarm | hover and stare is lost (its only channel); dives and swarms weaken as above |
+| `imuz` | payload release, evasive jinking, jamming | all three are lost |
+| `rpm` | airframe class, laden rotor | both are lost |
+
+Of the identifiers, the drone id and sample time are essential. The tickerplant stamp is what lag
+is measured from. The signals come from telemetry-kit's generator, `gen.q`. They are
 smooth, with per-drone randomness, and deterministic: the same drone at the same time always has
 the same values.
 
