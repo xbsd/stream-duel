@@ -14,8 +14,8 @@ for an internal KX audience. Everything is synthetic.
 | `rdb.q` | 5111 | kdb+ | RDB: stores `telem` and `rotor`, measures lag, serves every page over a websocket (stats, newest rows, a drone's latest rows, save, clear, fleet) and relays the real-time engine's results |
 | `rte.q` | 5112 | kdb+ | Real-time engine: subscribes to the 1,024 watched drones only (`.u.subw`), keeps their last seconds, runs `analytics.q` every second |
 | `bridge/` (Python) | 5130 | DuckDB | Subscribes to the tickerplant over kdb+ IPC (PyKX, unlicensed: no q runtime), appends to an in-memory DuckDB, measures lag, runs the analytics, serves the page over a websocket |
-| `launcher.py` (Python) | 5100 | | Runs `start.sh` or `stop.sh --keep-launcher` when a page asks; localhost only, and only for a page opened from a file or from localhost. The pages' **Shut down** and **Start** go through it. |
-| `fleet-wall.html`, `live-data.html`, `stream-duel.html` | | | The three pages, opened as files. `common.js` gives them the bar of page links, the About the data popup and the launcher client. |
+| `launcher.py` (Python) | 5100 | | Serves the pages over http (`/` goes to `fleet-wall.html`; only the three pages and `common.js`, only for requests addressed to localhost). Runs `start.sh` or `stop.sh --keep-launcher` when a page asks over a websocket on the same port, only for a page opened from localhost or from a file. The pages' **Shut down** and **Start** go through it, and it keeps running after **Shut down**, so the site stays up. |
+| `fleet-wall.html`, `live-data.html`, `stream-duel.html` | | | The three pages, served at http://localhost:5100 (or opened as files). `common.js` gives them the bar of page links, the About the data popup and the launcher client. |
 
 Ports are telemetry-kit's plus 100, so both kits can run at once.
 
@@ -112,7 +112,7 @@ wall. kdb+: lag at insert in the RDB. DuckDB: lag after the insert commits. Same
 | RDB | `{cmd:"hover", id}` | `{type:"hover", id, telem:row\|null, rotor:row\|null}`: the drone's latest row in each table |
 | RDB | `{cmd:"save"}` | `{type:"saved", rows, path, ms}`: both tables to `hdb/<date>/` |
 | both lanes | `{cmd:"shutdown"}` | `{type:"shutdown", lane}`; the pages use the launcher's `{cmd:"stop"}` when it runs |
-| launcher | `{cmd:"start"}`, `{cmd:"stop"}`, `{cmd:"status"}` | `{type:"launcher", state:"idle"\|"starting"\|"stopping"\|"failed", detail}` |
+| launcher | `{cmd:"start"}`, `{cmd:"stop"}`, `{cmd:"status"}` | `{type:"launcher", state:"idle"\|"starting"\|"stopping"\|"failed", detail, root}`; `root` is the folder, for the start command a page shows |
 
 A page sends `fleet` and `mode` only when someone clicks, or after it started the system; otherwise
 it follows the RDB's fleet and mode from the stats, and keeps the DuckDB lane in step with them.

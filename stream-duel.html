@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Stream Duel</title>
+<link rel="icon" href="data:,">
 <style>
 :root {
   --paper: #E8ECEF;
@@ -312,9 +313,9 @@ function drawSpine() {
   if (starting || LAUNCH.state === "starting") say("Starting…", "Feed handlers, tickerplant and both lanes: about 10 seconds.");
   else if (LAUNCH.state === "stopping") say("Stopping…");
   else if (!anyUp() && Date.now() - BOOT < 2500) say("Connecting…");
-  else if (!anyUp() && LAUNCH.state === "failed") say("Start failed", LAUNCH.detail || `See the logs in ${DIR}/logs`);
+  else if (!anyUp() && LAUNCH.state === "failed") say("Start failed", LAUNCH.detail || `See the logs in ${SD.dir}/logs`);
   else if (!anyUp() && LAUNCH.up) say("Stopped", "Press Start, or pick a fleet size, to start everything again.");
-  else if (!anyUp()) say("Not running", `Start it in a terminal: cd ${DIR} && ./start.sh`);
+  else if (!anyUp()) say("Not running", `Start it in a terminal: cd ${SD.dir} && ./start.sh`);
   else if (st.fleet === 0) say("Feed off", "No drones are flying. Pick a fleet size to start them; both lanes keep what they stored.");
   else if (k && d && k.lag && d.lag && k.lag.p99 && d.lag.p99) {
     const r = d.lag.p99 / k.lag.p99;
@@ -480,7 +481,6 @@ armed(document.getElementById("clearBtn"), "Clear both lanes", "Click again to c
 });
 /* ---- starting and stopping: launcher.py on :5100 runs start.sh and stop.sh (common.js's SD.launch) ---- */
 const LAUNCH = SD.launch;
-const DIR = SD.dir;
 const BOOT = Date.now();
 let starting = 0;                                 // when this page asked to start (ms), else 0
 function anyUp() { return Object.values(LANES).some((L) => L.up); }
@@ -502,7 +502,7 @@ function renderRun() {
     stopBtn.textContent = busy ? (LAUNCH.state === "stopping" ? "Stopping…" : "Starting…") : stopped ? "Start" : "Shut down";
     stopBtn.disabled = busy || (stopped && !LAUNCH.up);
     stopBtn.title = stopped ? (LAUNCH.up ? "Start the feed handlers, the tickerplant and both lanes"
-      : `Run ./start.sh in ${DIR}: the launcher isn't running`) : "Stop every process (click twice)";
+      : `Run ./start.sh in ${SD.dir}: the launcher isn't running`) : "Stop every process (click twice)";
   }
   drawSpine();
 }

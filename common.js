@@ -2,7 +2,8 @@
  *   - the bar of page links and the "About the data" button, put into <nav id="pages">
  *   - the "About the data" dialog: what each drone sends, the rates and why, the cost per drone
  *     and at the current fleet, and why four metrics is the minimum
- *   - the launcher client (launcher.py on :5100), which runs start.sh and stop.sh for the pages
+ *   - the launcher client (launcher.py on :5100, which also serves the pages), which runs start.sh
+ *     and stop.sh for the pages
  * Each page sets SD.fleet to the fleet size it shows; the dialog reads it when it opens.
  * The styles borrow each page's own colour tokens, so the bar looks native on every page.
  */
@@ -169,12 +170,14 @@ dialog.sd-dlg::backdrop{background:rgba(4,10,20,.45)}
     ws.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch (_) { return; }
       if (m.type !== "launcher") return;
+      if (m.root) SD.dir = m.root;  // the folder, which a page served over http can't see
       launch.state = m.state; launch.detail = m.detail || ""; launch.tell();
     };
   }
   if (/^(file|http):$/.test(location.protocol)) connectLauncher();
 
   const SD = { PAGES, RATES, BYTES, PER_DRONE, fleet: null, launch, openAbout,
-    dir: decodeURIComponent(location.pathname).replace(/\/[^/]*$/, "") || "." };
+    dir: location.protocol === "file:" ? decodeURIComponent(location.pathname).replace(/\/[^/]*$/, "") || "."
+      : "stream-duel" };  // until the launcher says where the folder is
   window.SD = SD;
 })();

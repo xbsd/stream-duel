@@ -62,25 +62,35 @@ You need:
   dtaidistance's parallel DTW.
 
 ```bash
-./start.sh                 # builds the C libraries in lib/ if needed, starts every process
-open stream-duel.html      # or fleet-wall.html, or live-data.html: each links to the others
-./stop.sh                  # stops everything, the launcher too
+./start.sh                    # builds the C libraries in lib/ if needed, starts every process
+open http://localhost:5100    # the fleet wall; the bar at the top links to the other pages
+./stop.sh                     # stops everything, the site too
 ```
 
-The pages are plain HTML files. They need no web server and no build; they connect to the running
-processes by themselves.
+The pages are at:
 
-A page can't start processes, so `./start.sh` also starts a small **launcher** (`launcher.py`, port
-5100). It lets the pages run `start.sh` and `stop.sh`, and nothing else. It listens on this machine
-only and accepts only a page opened from a file or from localhost.
+| Page | Address |
+|---|---|
+| Fleet wall | http://localhost:5100 (it goes to http://localhost:5100/fleet-wall.html) |
+| Live data | http://localhost:5100/live-data.html |
+| kdb+ vs DuckDB | http://localhost:5100/stream-duel.html |
+
+`./start.sh` starts a small **launcher** (`launcher.py`, port 5100) that serves the pages and lets
+them run `start.sh` and `stop.sh`. It keeps running after a page's **Shut down**, so the site stays
+up and its **Start** button can bring everything back. It listens on this machine only. It serves the
+three pages and `common.js` and nothing else from the folder. It answers only requests addressed to
+localhost, and runs the scripts only for a page opened from localhost or from a file.
+
+The pages are plain HTML files with no build, so you can also open them straight from the folder
+(`open stream-duel.html`). Either way, they connect to the running processes by themselves.
 
 | To | Do |
 |---|---|
 | Stop the drones but keep everything running | **OFF** (red, key `0`) on the duel page |
 | Change the fleet | a fleet size on any page; every page follows |
-| Stop every process but the launcher | **Shut down** on any page (click twice) |
+| Stop every process but the launcher (the site stays up) | **Shut down** on any page (click twice) |
 | Start everything again from a page | **Start**, or on the duel page any fleet size |
-| Stop every process, the launcher too | `./stop.sh`. The pages then show the command to start again. |
+| Stop every process, the launcher and its site too | `./stop.sh`. A page left open shows the command to start again. |
 | Start every process from a terminal | `./start.sh` |
 
 ## The three pages
@@ -255,7 +265,7 @@ viewer can check the comparison's terms without leaving the page.
   stores both   watched drones only,        lag after commit; analysis thread: SQL window,
   tables, stats analysis every second       NumPy, dtaidistance (DTW in a worker process)
        │  websocket   │ results via the RDB         │  websocket
-       └──────────────┴── the pages (common.js; launcher.py :5100) ──┘
+       └──────────────┴── the pages (served by launcher.py :5100) ───┘
 ```
 
 The life of one row:
@@ -305,7 +315,7 @@ The message formats are in [DESIGN.md](DESIGN.md).
 | `rdb.q` | 5111 | kdb+ | RDB; the websocket for the wall, Live data and the duel's kdb+ lane |
 | `rte.q` | 5112 | kdb+ | Real-time engine |
 | `bridge/` | 5130 | DuckDB | Bridge and DuckDB; the duel page's websocket for the DuckDB lane |
-| `launcher.py` | 5100 | | Lets the pages run `start.sh` and `stop.sh` (localhost only) |
+| `launcher.py` | 5100 | | Serves the pages at http://localhost:5100 and lets them run `start.sh` and `stop.sh` (localhost only) |
 
 ## The data
 
@@ -572,6 +582,7 @@ cross-check fixture with `q tools/fixture.q -s 4`.
 
 | You see | Do this |
 |---|---|
+| http://localhost:5100 doesn't load | The launcher isn't running: run `./start.sh`. Or open the HTML files straight from the folder. |
 | "not running on :5111" or ":5130" | Press **Start** on a page; if it's greyed out, run `./start.sh`. |
 | Picking a fleet size after **Shut down** does nothing | The launcher isn't running (you ran `./stop.sh`, or started with an older `start.sh`). Run `./start.sh` once; from then on the pages can start everything. |
 | `./start.sh` fails with "address already in use" | Run `./stop.sh` first. It stops anything left from a previous run, and force-stops any process that hasn't exited after 5 s. |
@@ -596,7 +607,7 @@ Each process logs to `logs/` (`tp.log`, `fh0.log` …, `rdb.log`, `rte.log`, `br
 | `rdb.q`, `rte.q`, `analytics.q` | the kdb+ lane: storage, stats and the pages' websocket (5111), real-time engine (5112), the pattern matching |
 | `c/kx_fft.c`, `c/kx_blas.c`, `c/build.sh` | KissFFT and the platform BLAS exposed to q through the KX C API (`lib/kxfft.so`, `lib/kxblas.so`) |
 | `bridge/` | the DuckDB lane (5130): `server.py` (subscription, websocket), `store.py` (DuckDB), `analytics.py` (the pattern matching) |
-| `launcher.py` | lets the pages start and stop everything (port 5100, localhost only) |
+| `launcher.py` | serves the pages and lets them start and stop everything (port 5100, localhost only) |
 | `config.json`, `templates.json` | shared settings, thresholds and signature templates |
 | `tools/templates.q`, `tools/calibrate.q`, `tools/fixture.q` | write the templates, choose thresholds against planted truth, write the cross-check fixture |
 | `start.sh`, `stop.sh` | start and stop every process (`stop.sh --keep-launcher` leaves the launcher running) |
