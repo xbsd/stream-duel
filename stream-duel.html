@@ -115,6 +115,7 @@ footer p { margin: 4px 0; max-width: 110ch; }
 <body>
 <header>
   <h1>Stream Duel<span>One drone feed, two engines, measured live</span></h1>
+  <nav id="pages"></nav>
   <div class="controls">
     <span class="ctl-label" id="fleetLabel">Fleet</span>
     <div class="fleet" role="group" aria-labelledby="fleetLabel" id="fleet"></div>
@@ -182,6 +183,7 @@ footer p { margin: 4px 0; max-width: 110ch; }
   </section>
 </template>
 
+<script src="common.js"></script>
 <script>
 "use strict";
 const LANES = {
@@ -423,7 +425,7 @@ const fleetEl = document.getElementById("fleet");
   fleetEl.append(b);
 });
 function markFleet(n) {
-  st.fleet = n;
+  st.fleet = n; SD.fleet = n;
   for (const b of fleetEl.children) b.setAttribute("aria-pressed", String(Number(b.dataset.n) === n));
 }
 function setFleet(n) {
@@ -452,6 +454,7 @@ let localChange = 0;
 function adopt(id, s) {
   if (starting || Date.now() - localChange < 2000) return;
   if (id === "kdb") {
+    if (s.n != null) SD.fleet = s.n;
     if (s.n != null && s.n !== st.fleet) { markFleet(s.n); for (const k of Object.keys(LANES)) renderGrid(k); }
     if (s.mode && s.mode !== st.mode) markMode(s.mode);
   } else if (LANES.kdb.up && LANES.kdb.stats) {
@@ -475,33 +478,18 @@ function armed(btn, label, armedLabel, act) {
 armed(document.getElementById("clearBtn"), "Clear both lanes", "Click again to clear", () => {
   sendBoth({ cmd: "clear" }); for (const L of Object.values(LANES)) { L.reports = []; L.lagHist = []; L.since = null; }
 });
-/* ---- starting and stopping: launcher.py on :5100 runs start.sh and stop.sh for the page ---- */
-const LAUNCH = { url: "ws://localhost:5100", ws: null, up: false, state: "idle", detail: "" };
-const DIR = decodeURIComponent(location.pathname).replace(/\/[^/]*$/, "") || ".";
+/* ---- starting and stopping: launcher.py on :5100 runs start.sh and stop.sh (common.js's SD.launch) ---- */
+const LAUNCH = SD.launch;
+const DIR = SD.dir;
 const BOOT = Date.now();
 let starting = 0;                                 // when this page asked to start (ms), else 0
 function anyUp() { return Object.values(LANES).some((L) => L.up); }
 function allUp() { return Object.values(LANES).every((L) => L.up); }
-function connectLauncher() {
-  let ws;
-  try { ws = new WebSocket(LAUNCH.url); } catch (_) { setTimeout(connectLauncher, 2000); return; }
-  LAUNCH.ws = ws;
-  ws.onopen = () => { LAUNCH.up = true; renderRun(); };
-  ws.onclose = () => { LAUNCH.up = false; renderRun(); setTimeout(connectLauncher, 2000); };
-  ws.onerror = () => {};
-  ws.onmessage = (e) => {
-    let m; try { m = JSON.parse(e.data); } catch (_) { return; }
-    if (m.type !== "launcher") return;
-    LAUNCH.state = m.state; LAUNCH.detail = m.detail || "";
-    if (m.state === "failed") starting = 0;
-    renderRun();
-  };
-}
 function startAll() {
   if (!LAUNCH.up || starting || LAUNCH.state === "starting") return;
   if (st.fleet === 0) markFleet(1024);
   starting = Date.now();
-  LAUNCH.ws.send(JSON.stringify({ cmd: "start" }));
+  LAUNCH.send("start");
   renderRun();
 }
 const stopBtn = document.getElementById("stopBtn");
@@ -526,12 +514,13 @@ stopBtn.onclick = () => {
     return;
   }
   clearTimeout(stopTimer); stopBtn.classList.remove("armed");
-  if (LAUNCH.up) LAUNCH.ws.send(JSON.stringify({ cmd: "stop" }));   // stop.sh: force-stops anything stuck
+  if (LAUNCH.up) LAUNCH.send("stop");               // stop.sh: force-stops anything stuck
   else sendBoth({ cmd: "shutdown" });
   renderRun();
 };
 
-connect("kdb"); connect("duck"); connectLauncher();
+connect("kdb"); connect("duck");
+LAUNCH.on(() => { if (LAUNCH.state === "failed") starting = 0; renderRun(); });
 setInterval(() => { renderRun(); for (const id of Object.keys(LANES)) renderStats(id); }, 1000);
 </script>
 </body>

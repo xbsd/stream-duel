@@ -67,8 +67,9 @@ saveHdb:{
   .Q.dpft[`:hdb;.z.D;`uav;] each TABS;
   `type`rows`path`ms!(`saved;n;"hdb/",string .z.D;`long$1e-6*`long$.z.p-t0)}
 / past MAXROWS, each table keeps its newest two thirds
-trimRows:{{[t] t set (neg (2*count v) div 3)#v:value t} each TABS; .Q.gc[];}
-setKeep:{[n] MAXROWS::n; if[MAXROWS<held[]; trimRows[]];}
+/ (no .Q.gc here: handing memory back to the OS mid-stream stalls inserts; Clear and Keep do it)
+trimRows:{{[t] t set (neg (2*count v) div 3)#v:value t} each TABS;}
+setKeep:{[n] MAXROWS::n; if[MAXROWS<held[]; trimRows[]; .Q.gc[]];}
 clearRdb:{
   t0:.z.p; n:held[]; {delete from x} each TABS; TOTAL::0; VTOTAL::0; LASTT::0; LASTV::0; .Q.gc[];
   `type`lane`rows`ms!(`cleared;`kdb;n;`long$1e-6*`long$.z.p-t0)}

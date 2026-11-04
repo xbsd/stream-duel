@@ -115,7 +115,7 @@ def test_tap_has_both_tables_and_span(store):
 
 def test_last_rows_newest_first(store):
     rows = store.last_rows("rotor", 3)
-    assert [r["rpm"] for r in rows][0] in (10000 + 499, 20000 + 499, 30000 + 499, 40000 + 499)
+    assert rows[0]["rpm"] in (10000 + 499, 20000 + 499, 30000 + 499, 40000 + 499)
     assert list(rows[0]) == list(COLS["rotor"])
 
 
